@@ -112,7 +112,7 @@ Como usuario autenticado, quiero editar el título, descripción o fecha límite
 
 ### Functional Requirements
 
-- **FR-001**: El sistema DEBE permitir el registro de usuarios mediante correo y contraseña.
+- **FR-001**: El sistema DEBE permitir el registro de usuarios mediante correo y contraseña (longitud mínima de 8 caracteres).
 - **FR-002**: El sistema DEBE validar el formato del correo electrónico y asegurar su unicidad a nivel de servicio y base de datos.
 - **FR-003**: El sistema DEBE almacenar las contraseñas utilizando un algoritmo de hashing criptográfico seguro (ej. bcrypt / scrypt / pbkdf2), nunca en texto plano.
 - **FR-004**: El sistema DEBE proveer inicio de sesión mediante verificación de correo y contraseña, manteniendo una sesión segura en el backend (cookies firmadas / session Flask).

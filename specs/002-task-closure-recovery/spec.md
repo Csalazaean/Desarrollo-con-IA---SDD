@@ -60,7 +60,7 @@ Como usuario que olvidó su contraseña, quiero solicitar el restablecimiento me
 **Acceptance Scenarios**:
 1. **Given** un usuario que ingresa un correo registrado en el formulario de recuperación, **When** envía la solicitud, **Then** el sistema responde con un mensaje neutro de confirmación, genera un token seguro de un solo uso con expiración temporal y registra el evento `PASSWORD_RESET_REQUESTED`.
 2. **Given** una solicitud con un correo que NO existe en el sistema o con formato no registrado, **When** se envía la solicitud, **Then** el sistema muestra exactamente el mismo mensaje neutro de confirmación que para un correo válido, sin generar tokens ni filtrar la inexistencia de la cuenta.
-3. **Given** un enlace de recuperación con token válido y vigente, **When** el usuario ingresa su nueva contraseña cumpliendo las políticas de seguridad, **Then** la contraseña se actualiza con hash seguro, el token queda inmediatamente invalidado para futuros usos, se audita `PASSWORD_RESET_COMPLETED` y el usuario puede iniciar sesión con su nueva clave.
+3. **Given** un enlace de recuperación con token válido y vigente, **When** el usuario ingresa su nueva contraseña cumpliendo las políticas de seguridad (longitud mínima de 8 caracteres), **Then** la contraseña se actualiza con hash seguro, el token queda inmediatamente invalidado para futuros usos, se audita `PASSWORD_RESET_COMPLETED` y el usuario puede iniciar sesión con su nueva clave.
 4. **Given** un token que ya fue utilizado previamente, **When** se intenta acceder o enviar una nueva contraseña mediante dicho enlace, **Then** el sistema rechaza la solicitud indicando que el enlace es inválido o ya ha sido utilizado.
 5. **Given** un token cuyo tiempo límite de validez ha expirado, **When** se intenta utilizar, **Then** el sistema rechaza la solicitud indicando que el enlace ha expirado y requiere solicitar uno nuevo.
 
@@ -95,7 +95,7 @@ Como usuario que olvidó su contraseña, quiero solicitar el restablecimiento me
 - **FR-012**: La respuesta del sistema a la solicitud de recuperación de contraseña DEBE ser neutra e idéntica independientemente de si el correo existe o no en la base de datos, evitando la enumeración de cuentas.
 - **FR-013**: Para solicitudes con correo registrado válido, el sistema DEBE generar un token de restablecimiento criptográficamente seguro con un tiempo de expiración predefinido (ej. 30 minutos).
 - **FR-014**: El sistema DEBE almacenar el token de restablecimiento de forma no reversible o protegido mediante hash criptográfico (nunca en texto plano en la base de datos), impidiendo la exposición de secretos en caso de volcado de datos.
-- **FR-015**: El sistema DEBE permitir restablecer la contraseña mediante el token válido, exigiendo una nueva contraseña válida que será hasheada e invalidando inmediatamente el token para evitar cualquier reutilización.
+- **FR-015**: El sistema DEBE permitir restablecer la contraseña mediante el token válido, exigiendo una nueva contraseña válida (longitud mínima de 8 caracteres) que será hasheada e invalidando inmediatamente el token para evitar cualquier reutilización.
 - **FR-016**: El sistema DEBE rechazar cualquier intento de restablecimiento que utilice un token expirado, ya utilizado o inválido.
 - **FR-017**: El sistema DEBE registrar eventos de auditoría para la solicitud de restablecimiento (`PASSWORD_RESET_REQUESTED`) y para la culminación exitosa del restablecimiento (`PASSWORD_RESET_COMPLETED`).
 

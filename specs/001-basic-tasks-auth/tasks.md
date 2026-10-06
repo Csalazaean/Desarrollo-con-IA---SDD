@@ -1,7 +1,7 @@
 # Tasks: 001-basic-tasks-auth
 
 **Feature**: 001-basic-tasks-auth (Gestión básica de tareas con autenticación)  
-**Spec**: [spec.md](file:///C:/Users/osqui/OneDrive/Desktop/Nuevo_Proyecto/specs/001-basic-tasks-auth/spec.md) | **Plan**: [plan.md](file:///C:/Users/osqui/OneDrive/Desktop/Nuevo_Proyecto/specs/001-basic-tasks-auth/plan.md)  
+**Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)  
 **Date**: 2026-09-29  
 **Status**: Completed  
 

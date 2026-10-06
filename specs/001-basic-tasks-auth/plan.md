@@ -1,6 +1,6 @@
 # Implementation Plan: 001-basic-tasks-auth
 
-**Branch**: `001-basic-tasks-auth` | **Date**: 2026-09-29 | **Spec**: [spec.md](file:///C:/Users/osqui/OneDrive/Desktop/Nuevo_Proyecto/specs/001-basic-tasks-auth/spec.md)
+**Branch**: `001-basic-tasks-auth` | **Date**: 2026-09-29 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `/specs/001-basic-tasks-auth/spec.md`
 
@@ -115,9 +115,6 @@ src/
 tests/
 ├── __init__.py
 ├── conftest.py               # Fixtures: app de prueba, base de datos en memoria, cliente HTTP
-├── unit/                     # Pruebas unitarias de modelos y utilidades
-│   ├── test_user_model.py
-│   └── test_task_model.py
 ├── services/                 # Pruebas de dominio (BLOQUEANTE según Principio IV)
 │   ├── test_user_service.py  # Unicidad de correo, hashing, validaciones
 │   └── test_task_service.py  # Máquina de estados, aislamiento de usuario, auditoría
