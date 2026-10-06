@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Mis Tareas - TaskControl{% endblock %}
+
+{% block content %}
+<div class="tasks-page">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <h2>Mis Tareas</h2>
+    </div>
+
+    <!-- Formulario de Creación de Tarea (HU-01) -->
+    <div class="form-card" style="max-width: 100%; margin: 0 0 2rem 0; padding: 1.5rem;">
+        <h3 style="margin-bottom: 1rem; font-size: 1.1rem;">Nueva Tarea</h3>
+        <form action="{{ url_for('tasks.create_task_route') }}" method="POST">
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="title">Título *</label>
+                    <input type="text" id="title" name="title" class="form-control" required placeholder="¿Qué necesitas hacer?">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="due_date">Fecha Límite</label>
+                    <input type="date" id="due_date" name="due_date" class="form-control">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="description">Descripción (opcional)</label>
+                <textarea id="description" name="description" class="form-control" rows="2" placeholder="Detalles adicionales..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">Guardar Tarea</button>
+        </form>
+    </div>
+
+    <!-- Filtros de Estado (HU-02) -->
+    <div class="filters">
+        <a href="{{ url_for('tasks.list_tasks') }}" class="filter-btn {% if not current_status %}active{% endif %}">Todas</a>
+        <a href="{{ url_for('tasks.list_tasks', status='pending') }}" class="filter-btn {% if current_status == 'pending' %}active{% endif %}">Pendientes</a>
+        <a href="{{ url_for('tasks.list_tasks', status='in_progress') }}" class="filter-btn {% if current_status == 'in_progress' %}active{% endif %}">En Progreso</a>
+        <a href="{{ url_for('tasks.list_tasks', status='completed') }}" class="filter-btn {% if current_status == 'completed' %}active{% endif %}">Completadas</a>
+    </div>
+
+    <!-- Listado de Tareas (HU-02) -->
+    <div class="tasks-list">
+        {% if tasks %}
+            {% for task in tasks %}
+                <div class="task-card">
+                    <div style="flex: 1;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+                            <span class="badge badge-{{ task.status }}">
+                                {% if task.status == 'pending' %}Pendiente
+                                {% elif task.status == 'in_progress' %}En Progreso
+                                {% elif task.status == 'completed' %}Completada
+                                {% endif %}
+                            </span>
+                            <h4 style="font-size: 1.1rem; font-weight: 600;">{{ task.title }}</h4>
+                        </div>
+                        {% if task.description %}
+                            <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 0.5rem;">{{ task.description }}</p>
+                        {% endif %}
+                        <div style="font-size: 0.85rem; color: var(--text-muted); display: flex; gap: 1rem;">
+                            {% if task.due_date %}
+                                <span>📅 Vence: {{ task.due_date }}</span>
+                            {% endif %}
+                            <span>🕒 Creada: {{ task.created_at.strftime('%Y-%m-%d') if task.created_at else '' }}</span>
+                        </div>
+                    </div>
+
+                    <!-- Acciones de Estado y Edición (HU-03, HU-04) -->
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        {% if task.status == 'pending' %}
+                            <form action="{{ url_for('tasks.update_status_route', task_id=task.id) }}" method="POST" class="inline-form">
+                                <input type="hidden" name="status" value="in_progress">
+                                <button type="submit" class="btn btn-secondary btn-sm">Iniciar</button>
+                            </form>
+                            <form action="{{ url_for('tasks.update_status_route', task_id=task.id) }}" method="POST" class="inline-form">
+                                <input type="hidden" name="status" value="completed">
+                                <button type="submit" class="btn btn-primary btn-sm">Completar</button>
+                            </form>
+                        {% elif task.status == 'in_progress' %}
+                            <form action="{{ url_for('tasks.update_status_route', task_id=task.id) }}" method="POST" class="inline-form">
+                                <input type="hidden" name="status" value="pending">
+                                <button type="submit" class="btn btn-secondary btn-sm">Pausar</button>
+                            </form>
+                            <form action="{{ url_for('tasks.update_status_route', task_id=task.id) }}" method="POST" class="inline-form">
+                                <input type="hidden" name="status" value="completed">
+                                <button type="submit" class="btn btn-primary btn-sm">Completar</button>
+                            </form>
+                        {% endif %}
+
+                        <a href="{{ url_for('tasks.edit_task_route', task_id=task.id) }}" class="btn btn-secondary btn-sm">Editar</a>
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div style="text-align: center; padding: 3rem 1rem; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); color: var(--text-muted);">
+                <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">No tienes tareas registradas {% if current_status %}con este filtro{% endif %}.</p>
+                <p style="font-size: 0.9rem;">Crea una nueva tarea utilizando el formulario superior.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

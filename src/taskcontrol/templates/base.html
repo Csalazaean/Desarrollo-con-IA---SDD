@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}TaskControl{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <header class="navbar">
+        <div class="container nav-content">
+            <a href="/" class="brand">TaskControl</a>
+            <nav class="nav-links">
+                {% if session.get('user_id') %}
+                    <span class="user-greeting">👤 {{ session.get('user_email', 'Usuario') }}</span>
+                    <a href="{{ url_for('tasks.list_tasks') }}">Mis Tareas</a>
+                    <form action="{{ url_for('auth.logout') }}" method="POST" class="inline-form">
+                        <button type="submit" class="btn btn-secondary btn-sm">Cerrar Sesión</button>
+                    </form>
+                {% else %}
+                    <a href="{{ url_for('auth.login') }}">Iniciar Sesión</a>
+                    <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-sm">Registrarse</a>
+                {% endif %}
+            </nav>
+        </div>
+    </header>
+
+    <main class="container main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2026 TaskControl &bull; Monolito Flask &bull; Arquitectura Limpia</p>
+        </div>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
