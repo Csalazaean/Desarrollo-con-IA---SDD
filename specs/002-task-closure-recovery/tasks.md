@@ -1,125 +1,108 @@
 # Tasks: 002-task-closure-recovery
 
-**Feature**: 002-task-closure-recovery (Cierre de gestión básica de tareas y recuperación de acceso)  
+**Feature**: 002-task-closure-recovery (Cierre del ciclo de tareas y recuperación de acceso)  
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)  
-**Date**: 2026-10-05  
+**Date**: 2026-10-01  
 **Status**: Ready for Implementation  
 
 ---
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-**Purpose**: Preparación de configuraciones compartidas y constantes del segundo incremento.
+**Purpose**: Sincronización del entorno, ampliación de constantes de auditoría y soporte base para nuevos eventos.
 
-- [ ] T001 [P] Configure password reset token expiration setting `PASSWORD_RESET_TOKEN_EXPIRATION_MINUTES = 30` in `src/taskcontrol/config.py`
-- [ ] T002 [P] Update audit log action definitions and documentation in `src/taskcontrol/models/audit.py` to support `TASK_DELETED`, `TASK_REOPENED`, `PASSWORD_RESET_REQUESTED`, and `PASSWORD_RESET_COMPLETED` per Principle VIII
+- [ ] T001 Synchronize development environment and verify baseline test suite in `tests/` with `pytest`
+- [ ] T002 [P] Register new audit action constants (`TASK_DELETED`, `TASK_REOPENED`, `PASSWORD_RESET_REQUESTED`, `PASSWORD_RESET_COMPLETED`) in `src/taskcontrol/models/audit.py` per `specs/002-task-closure-recovery/data-model.md`
+- [ ] T003 [P] Extend `AuditService` in `src/taskcontrol/services/audit_service.py` supporting anonymous/system actor (defaulting to `actor_id=0` when actor is unauthenticated) and registering new audit action constants
 
 ---
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-**Purpose**: Infraestructura bloqueante del modelo relacional y migraciones de esquema requeridas por todas las historias de usuario.
+**Purpose**: Infraestructura de datos bloqueante: extensión de `Task` para soft delete, nuevo modelo `PasswordResetToken`, migraciones de base de datos y excepciones de dominio.
 
-**CRITICAL**: Ninguna historia de usuario puede implementarse hasta que los modelos y migraciones de esta fase estén listos y verificados.
+**⚠️ CRITICAL**: Ninguna historia de usuario puede implementarse hasta completar esta fase.
 
-- [ ] T003 Extend `Task` model in `src/taskcontrol/models/task.py` with constraints `is_deleted (Boolean, default False, Not Null, Index)` and `deleted_at (DateTime UTC, Nullable)` per `data-model.md`
-- [ ] T004 [P] Create `PasswordResetToken` model in `src/taskcontrol/models/password_reset.py` with constraints `id (PK, Integer, autoincrement)`, `user_id (Integer, FK users.id, Not Null, Index)`, `token_hash (String(64), Not Null, Index)`, `expires_at (DateTime UTC, Not Null)`, `used_at (DateTime UTC, Nullable)` and `created_at (DateTime UTC, Not Null, default UTC)` per `data-model.md`
-- [ ] T005 [P] Register and export `PasswordResetToken` in `src/taskcontrol/models/__init__.py`
-- [ ] T006 Create Alembic migration script in `migrations/versions/` adding `is_deleted` (with `server_default='0'`), `deleted_at`, index `ix_tasks_is_deleted` to table `tasks`, and creating table `password_reset_tokens` per Principle VI
+- [ ] T004 Extend `Task` model in `src/taskcontrol/models/task.py` with columns `is_deleted (Boolean, Not Null, default False, index)` and `deleted_at (DateTime, Nullable, UTC)` per `specs/002-task-closure-recovery/data-model.md`
+- [ ] T005 [P] Create `PasswordResetToken` model in `src/taskcontrol/models/password_reset.py` with columns `id (PK, Integer)`, `user_id (FK users.id, Not Null, index)`, `token_hash (String(64), Not Null, index)`, `expires_at (DateTime, Not Null, UTC)`, `used_at (DateTime, Nullable, UTC)`, `created_at (DateTime, Not Null, default UTC)` per `specs/002-task-closure-recovery/data-model.md`
+- [ ] T006 Expose `PasswordResetToken` in `src/taskcontrol/models/__init__.py` and generate database migration script in `migrations/versions/` executing upgrade per Principle VI
+- [ ] T007 [P] Define domain exceptions (`TaskNotFoundError`, `TaskAlreadyDeletedError`, `InvalidTaskStateTransitionError`, `InvalidResetTokenError`) in `src/taskcontrol/services/task_service.py` and `src/taskcontrol/services/user_service.py`
 
-**Checkpoint**: Esquema y modelos relacionales listos. La implementación de historias de usuario puede comenzar.
+**Checkpoint**: Base de datos y modelos listos con compatibilidad retrospectiva. Las historias de usuario pueden comenzar.
 
 ---
 
 ## Phase 3: User Story 1 - Eliminación Lógica de Tareas (HU-05) (Priority: P1) 🎯 MVP Core
 
-**Goal**: Permitir al usuario autenticado eliminar lógicamente tareas propias (soft delete) garantizando que no se borren físicamente, se excluyan del listado principal y registren auditoría `TASK_DELETED`.
+**Goal**: Permitir a un usuario autenticado eliminar lógicamente una tarea propia (*soft delete*), excluyéndola del listado habitual sin borrar el registro físico ni perder el historial de auditoría.
 
-**Independent Test**: Crear una tarea como usuario autenticado, solicitar su eliminación y verificar que:
-1. Desaparece del listado por defecto (`get_user_tasks` y `/tasks`).
-2. El registro en la tabla `tasks` permanece intacto con `is_deleted = True` y `deleted_at` fijado.
-3. Se genera un registro inmutable en `AuditLog` con acción `TASK_DELETED`.
-4. Intentar eliminarla nuevamente arroja error `TaskAlreadyDeletedError` (código HTTP 400 o 409).
-5. Intentar eliminarla con otro usuario arroja `TaskNotFoundError` (404 Not Found).
+**Independent Test**: Crear una tarea activa, solicitar su eliminación con sesión autenticada; verificar que desaparezca del listado por defecto (`GET /tasks`), que permanezca en la tabla `tasks` con `is_deleted=True` y que exista un registro `TASK_DELETED` en `AuditLog`.
 
 ### Tests for User Story 1 (Test-First bloqueante - Principio IV) ⚠️
-> **NOTA: Escribir estas pruebas primero y verificar que FALLAN antes de implementar el código de producción**
+> **NOTA: Escribir estas pruebas primero y verificar que FALLAN antes de implementar el código**
 
-- [ ] T007 [P] [US1] Write failing service tests for soft delete in `tests/services/test_task_service.py` (`test_soft_delete_task_marks_deleted_and_sets_timestamp`, `test_soft_delete_preserves_task_in_database_and_audit_history`, `test_deleted_task_excluded_from_default_listing`, `test_cannot_delete_already_deleted_task`, `test_cannot_edit_deleted_task`, `test_delete_task_unauthorized_or_not_found`)
-- [ ] T008 [P] [US1] Write failing functional tests for delete endpoint in `tests/functional/test_task_routes.py` (`test_delete_task_endpoint_success_json_and_html`, `test_delete_task_endpoint_unauthorized`, `test_delete_task_endpoint_not_found_for_other_user`, `test_delete_task_endpoint_already_deleted_returns_error`)
+- [ ] T008 [P] [US1] Write failing service tests for soft delete in `tests/services/test_task_service.py` (`test_soft_delete_task_marks_deleted_and_sets_timestamp`, `test_soft_delete_preserves_task_in_database_and_audit_history`, `test_deleted_task_excluded_from_default_listing`, `test_cannot_delete_already_deleted_task`, `test_cannot_edit_deleted_task`)
+- [ ] T009 [P] [US1] Write failing functional tests for task deletion routes in `tests/functional/test_task_routes.py` (`POST /tasks/<id>/delete` returns 200 JSON / 302 HTML on success, 401 without session, 404 for other user's task or non-existent task, 400/409 on already deleted task per contract)
 
 ### Implementation for User Story 1
-- [ ] T009 [US1] Define `TaskAlreadyDeletedError` exception in `src/taskcontrol/services/task_service.py`
-- [ ] T010 [US1] Update `get_user_tasks` and `get_task_by_id` in `src/taskcontrol/services/task_service.py` to filter `is_deleted == False` by default and raise `TaskNotFoundError` if accessing a deleted task
-- [ ] T011 [US1] Implement `delete_task(task_id, user_id)` in `src/taskcontrol/services/task_service.py` setting `is_deleted = True`, `deleted_at = now_utc`, persisting changes, preventing double deletion via `TaskAlreadyDeletedError`, and logging audit action `TASK_DELETED` per Principle VIII
-- [ ] T012 [US1] Guard `update_task_details` and `update_task_status` in `src/taskcontrol/services/task_service.py` to prevent modifying deleted tasks
-- [ ] T013 [US1] Implement route handler `POST /tasks/<int:task_id>/delete` (and support `DELETE /tasks/<int:task_id>`) in `src/taskcontrol/routes/tasks.py` supporting JSON and HTML flash redirection per `specs/002-task-closure-recovery/contracts/task-contracts.md`
-- [ ] T014 [US1] Add delete action button and modal/confirmation form in `src/taskcontrol/templates/tasks/index.html`
+- [ ] T010 [US1] Update `get_user_tasks` and `get_task_by_id` in `src/taskcontrol/services/task_service.py` to filter by `is_deleted=False` by default, preserving Increment 1 contract
+- [ ] T011 [US1] Implement `delete_task(task_id, user_id)` in `src/taskcontrol/services/task_service.py` setting `is_deleted=True`, `deleted_at=now_utc()`, raising `TaskAlreadyDeletedError` if already deleted, and logging `TASK_DELETED` (make service tests pass)
+- [ ] T012 [US1] Implement `POST /tasks/<int:task_id>/delete` route handler in `src/taskcontrol/routes/tasks.py` with `@login_required` per `specs/002-task-closure-recovery/contracts/task-contracts.md` (make functional tests pass)
+- [ ] T013 [US1] Add "Eliminar" action button with confirmation in `src/taskcontrol/templates/tasks/index.html`
 
-**Checkpoint**: User Story 1 completa y verificada con pruebas automatizadas en verde.
+**Checkpoint**: User Story 1 (HU-05) completamente operativa y verificada con pruebas automatizadas.
 
 ---
 
 ## Phase 4: User Story 2 - Reapertura de Tareas Completadas (HU-06) (Priority: P1)
 
-**Goal**: Permitir al usuario autenticado reabrir una tarea en estado `completed` regresándola a estado activo `pending` y auditando el evento específico `TASK_REOPENED`.
+**Goal**: Permitir a un usuario autenticado reabrir una tarea previamente marcada como completada, devolviéndola al estado activo inicial `pending` y registrando el evento específico `TASK_REOPENED` en el log de auditoría.
 
-**Independent Test**: Marcar una tarea como completada, ejecutar la reapertura y verificar que:
-1. Su estado cambia a `pending`.
-2. En `AuditLog` se registra un evento con acción `TASK_REOPENED` con detalles estructurados `{"previous_status": "completed", "new_status": "pending", "trigger": "user_reopen"}`.
-3. Si la tarea está en estado `pending` o `in_progress`, o si está eliminada lógicamente, la reapertura es rechazada con código de error.
+**Independent Test**: Marcar una tarea como completada, ejecutar la reapertura y verificar que el estado retorne a `pending` y que en `AuditLog` aparezca el evento diferenciado `TASK_REOPENED` con los detalles de la transición.
 
 ### Tests for User Story 2 (Test-First bloqueante - Principio IV) ⚠️
-> **NOTA: Escribir estas pruebas primero y verificar que FALLAN antes de implementar el código de producción**
-
-- [ ] T015 [P] [US2] Write failing service tests for task reopening in `tests/services/test_task_service.py` (`test_reopen_completed_task_success`, `test_reopen_task_generates_specific_task_reopened_audit_log`, `test_cannot_reopen_non_completed_task`, `test_cannot_reopen_deleted_task`)
-- [ ] T016 [P] [US2] Write failing functional tests for reopen endpoint in `tests/functional/test_task_routes.py` (`test_reopen_task_endpoint_success`, `test_reopen_task_endpoint_invalid_state`, `test_reopen_task_endpoint_unauthorized`, `test_reopen_task_endpoint_not_found`)
+- [ ] T014 [P] [US2] Write failing service tests for task reopening in `tests/services/test_task_service.py` (`test_reopen_completed_task_success`, `test_reopen_task_generates_specific_task_reopened_audit_log`, `test_cannot_reopen_non_completed_or_deleted_task`)
+- [ ] T015 [P] [US2] Write failing functional tests for task reopening route in `tests/functional/test_task_routes.py` (`POST /tasks/<id>/reopen` returns 200 JSON / 302 HTML on success, 400 if status is not `completed` or if task is deleted, 404 for unauthorized or non-existent task, 401 without session)
 
 ### Implementation for User Story 2
-- [ ] T017 [US2] Implement `reopen_task(task_id, user_id)` in `src/taskcontrol/services/task_service.py` validating that `task.status == 'completed'` and `task.is_deleted is False`, updating status to `'pending'`, and recording audit event `TASK_REOPENED` per Principle VIII
-- [ ] T018 [US2] Implement route handler `POST /tasks/<int:task_id>/reopen` in `src/taskcontrol/routes/tasks.py` returning JSON or redirecting to `/tasks` per `specs/002-task-closure-recovery/contracts/task-contracts.md`
-- [ ] T019 [US2] Add reopen button and action triggers for completed tasks in `src/taskcontrol/templates/tasks/index.html`
+- [ ] T016 [US2] Implement `reopen_task(task_id, user_id)` in `src/taskcontrol/services/task_service.py` validating that `task.status == 'completed'` and `task.is_deleted is False`, updating status to `'pending'`, and invoking `audit_service.log_event` with action `TASK_REOPENED`
+- [ ] T017 [US2] Implement `POST /tasks/<int:task_id>/reopen` route handler in `src/taskcontrol/routes/tasks.py` with `@login_required` per `specs/002-task-closure-recovery/contracts/task-contracts.md`
+- [ ] T018 [US2] Add "Reabrir" action button in `src/taskcontrol/templates/tasks/index.html` displayed conditionally for tasks in `completed` status
 
-**Checkpoint**: User Stories 1 y 2 completamente funcionales y auditadas.
+**Checkpoint**: User Story 2 (HU-06) completamente funcional e integrada con el ciclo de vida de tareas.
 
 ---
 
 ## Phase 5: User Story 3 - Recuperación Segura de Contraseña (HU-14) (Priority: P2)
 
-**Goal**: Permitir la recuperación de contraseñas mediante solicitud neutra por correo electrónico, tokens temporales criptográficos de 30 minutos almacenados exclusivamente como hash SHA-256 e invalidación atómica tras su uso.
+**Goal**: Permitir a los usuarios restablecer su contraseña mediante solicitud por correo electrónico con respuesta neutra (previniendo enumeración de cuentas), generación de tokens temporales de uso único protegidos con hash SHA-256 e invalidación atómica al actualizar la clave.
 
-**Independent Test**:
-1. Solicitar recuperación con un correo existente y con uno inexistente: ambas respuestas deben ser idénticas y neutras (código 200 OK con mensaje neutro, 0% de fuga de información).
-2. Verificar que en la base de datos se almacena únicamente el hash SHA-256 (64 caracteres hexadecimales) y no el token en texto plano.
-3. Usar el token válido para cambiar la contraseña: la nueva contraseña debe permitir login y el token debe quedar invalidado (`used_at` registrado).
-4. Reintentar usar el mismo token o uno expirado: la solicitud debe ser rechazada.
+**Independent Test**: Solicitar restablecimiento con correo registrado e inexistente (ambos retornan mensaje idéntico neutro 200 OK); utilizar el enlace/token para ingresar nueva contraseña (mínimo 8 caracteres); verificar que el login funcione con la nueva clave y que el token quede invalidado para cualquier reintento o tras 30 minutos.
 
 ### Tests for User Story 3 (Test-First bloqueante - Principio IV) ⚠️
-> **NOTA: Escribir estas pruebas primero y verificar que FALLAN antes de implementar el código de producción**
-
-- [ ] T020 [P] [US3] Write failing service tests for password reset in `tests/services/test_user_service.py` (`test_password_reset_request_neutral_response_existing_and_non_existing_email`, `test_password_reset_token_hashed_in_database`, `test_password_reset_token_expiration`, `test_password_reset_success_updates_password_and_invalidates_token`, `test_cannot_reuse_already_used_reset_token`, `test_multiple_reset_requests_invalidates_previous_pending_tokens`, `test_audit_logs_for_password_reset_requested_and_completed`)
-- [ ] T021 [P] [US3] Write failing functional tests for auth recovery endpoints in `tests/functional/test_auth_routes.py` (`test_forgot_password_endpoint_neutral_response`, `test_forgot_password_invalid_email_format`, `test_reset_password_get_endpoint_valid_and_invalid_token`, `test_reset_password_post_endpoint_success`, `test_reset_password_post_password_mismatch_or_short`, `test_reset_password_post_used_or_expired_token`)
+- [ ] T019 [P] [US3] Write failing service tests for password reset in `tests/services/test_user_service.py` (`test_password_reset_request_neutral_response_existing_and_non_existing_email`, `test_password_reset_token_hashed_in_database`, `test_password_reset_success_updates_password_and_invalidates_token`, `test_cannot_reuse_already_used_reset_token`, `test_cannot_use_expired_reset_token`)
+- [ ] T020 [P] [US3] Write failing functional tests for password reset routes in `tests/functional/test_auth_routes.py` (`POST /auth/forgot-password` returns 200 with neutral message, `GET /auth/reset-password/<token>` renders form for valid token and 400 for expired/used token, `POST /auth/reset-password/<token>` updates password, invalidates token and redirects to login)
 
 ### Implementation for User Story 3
-- [ ] T022 [US3] Implement `request_password_reset(email)` in `src/taskcontrol/services/user_service.py` with email normalization, neutral return, token generation via `secrets.token_urlsafe(32)`, SHA-256 hashing, 30-minute expiration, invalidation of prior pending tokens, console link log simulation via `app.logger.info`, and audit logging `PASSWORD_RESET_REQUESTED`
-- [ ] T023 [US3] Implement `verify_reset_token(raw_token)` and `reset_password(raw_token, new_password)` in `src/taskcontrol/services/user_service.py` with password length validation (min 8 chars), atomic update of `user.password_hash` and `token.used_at`, and audit logging `PASSWORD_RESET_COMPLETED` per Principle VII and VIII
-- [ ] T024 [P] [US3] Create password recovery request template in `src/taskcontrol/templates/auth/forgot_password.html` with email form and neutral message display
-- [ ] T025 [P] [US3] Create password reset confirmation template in `src/taskcontrol/templates/auth/reset_password.html` with new password and confirmation password fields
-- [ ] T026 [US3] Implement route handlers `GET` and `POST /auth/forgot-password` in `src/taskcontrol/routes/auth.py` per `specs/002-task-closure-recovery/contracts/auth-contracts.md`
-- [ ] T027 [US3] Implement route handlers `GET` and `POST /auth/reset-password/<string:token>` in `src/taskcontrol/routes/auth.py` per `specs/002-task-closure-recovery/contracts/auth-contracts.md`
-- [ ] T028 [US3] Add link to "Olvidé mi contraseña" in login template `src/taskcontrol/templates/auth/login.html`
+- [ ] T021 [US3] Implement cryptographic token generation and SHA-256 hashing helpers (`secrets.token_urlsafe(32)`, `hashlib.sha256`) in `src/taskcontrol/services/user_service.py`
+- [ ] T022 [US3] Implement `request_password_reset(email)` in `src/taskcontrol/services/user_service.py` normalizing email, returning `True` neutrally for existing and non-existing accounts, invalidating prior tokens, persisting SHA-256 token hash with 30-min expiration, emitting simulation log to `app.logger.info`, and logging `PASSWORD_RESET_REQUESTED`
+- [ ] T023 [US3] Implement `verify_reset_token(raw_token)` and `reset_password(raw_token, new_password)` in `src/taskcontrol/services/user_service.py` validating 8-character minimum, updating `user.password_hash`, atomically setting `token.used_at = now_utc()`, and logging `PASSWORD_RESET_COMPLETED`
+- [ ] T024 [US3] Implement forgot-password and reset-password route handlers (`GET /auth/forgot-password`, `POST /auth/forgot-password`, `GET /auth/reset-password/<token>`, `POST /auth/reset-password/<token>`) in `src/taskcontrol/routes/auth.py` per `specs/002-task-closure-recovery/contracts/auth-contracts.md`
+- [ ] T025 [P] [US3] Create forgot password template in `src/taskcontrol/templates/auth/forgot_password.html` with email submission form and link to login
+- [ ] T026 [P] [US3] Create reset password template in `src/taskcontrol/templates/auth/reset_password.html` with new password fields, confirmation, and error alerts
+- [ ] T027 [US3] Add "Olvidé mi contraseña" link in `src/taskcontrol/templates/auth/login.html` leading to `/auth/forgot-password`
 
-**Checkpoint**: Flujo de recuperación de contraseñas completamente implementado, seguro y probado.
+**Checkpoint**: Flujo de recuperación de contraseñas (HU-14) completado y seguro.
 
 ---
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-**Purpose**: Verificación global, integración cliente y aseguramiento de calidad del incremento.
+**Purpose**: Verificación integral de calidad, scripts cliente y suite completa sin regresiones.
 
-- [ ] T029 [P] Update client-side JavaScript handlers in `src/taskcontrol/static/js/main.js` to support interactive deletion and reopening confirmations
-- [ ] T030 Run full automated test suite with `pytest` ensuring 100% passing tests and zero regressions across all increments
-- [ ] T031 Validate integration scenarios and manual curl/browser workflows per `specs/002-task-closure-recovery/quickstart.md`
+- [ ] T028 [P] Enhance client-side interaction script in `src/taskcontrol/static/js/main.js` adding confirmation modal/prompt for task deletion and reopen
+- [ ] T029 Execute full test suite `pytest -v` across all service and functional tests ensuring 100% pass rate
+- [ ] T030 Validate end-to-end user workflows following `specs/002-task-closure-recovery/quickstart.md` ensuring zero regression against Increment 1 features
 
 ---
 
@@ -127,72 +110,50 @@
 
 ### Phase Dependencies
 
-- **Setup (Phase 1)**: No dependencies - can start immediately.
-- **Foundational (Phase 2)**: Depends on Phase 1 completion - BLOCKS all user stories.
-- **User Story 1 (Phase 3)**: Depends on Foundational (Phase 2) completion.
-- **User Story 2 (Phase 4)**: Depends on Foundational (Phase 2) completion. Integrates with task model and service, can proceed alongside or after US1.
-- **User Story 3 (Phase 5)**: Depends on Foundational (Phase 2) completion. Focuses on authentication domain and is completely decoupled from US1/US2.
-- **Polish (Phase 6)**: Depends on all user stories (US1, US2, US3) being completed.
+- **Setup (Phase 1)**: Sin dependencias, arranca de inmediato.
+- **Foundational (Phase 2)**: Depende de Phase 1. **BLOQUEA** todas las historias de usuario.
+- **User Story 1 (Phase 3 - HU-05)**: Depende de Foundational (Phase 2).
+- **User Story 2 (Phase 4 - HU-06)**: Depende de Foundational (Phase 2) y US1 (requiere modelos de tareas y soft delete activos).
+- **User Story 3 (Phase 5 - HU-14)**: Depende de Foundational (Phase 2). Puede ejecutarse en paralelo con US1/US2 a nivel de servicios y rutas.
+- **Polish (Phase 6)**: Depende de la conclusión de US1, US2 y US3.
 
-### User Story Dependencies
+### User Story Execution Graph
 
-- **User Story 1 (P1 - HU-05 Soft Delete)**: Operates on `Task` and `TaskService`. Independent of US2 and US3.
-- **User Story 2 (P1 - HU-06 Reopen Task)**: Extends `TaskService` state machine (`completed` → `pending`). Reuses soft delete guard from US1 to ensure deleted tasks cannot be reopened.
-- **User Story 3 (P2 - HU-14 Password Recovery)**: Operates on `User`, `PasswordResetToken` and `UserService`. No runtime dependencies on `Task`.
+```mermaid
+graph TD
+    P1[Phase 1: Setup] --> P2[Phase 2: Foundational]
+    P2 --> US1[US1: Soft Delete HU-05]
+    P2 --> US3[US3: Password Reset HU-14]
+    US1 --> US2[US2: Reabrir Tarea HU-06]
+    US2 --> P6[Phase 6: Polish & E2E Verification]
+    US3 --> P6
+```
 
-### Within Each User Story
-
-- Test-first tests MUST be written and verified FAILING before implementing production logic (Principio IV).
-- Models and exceptions before services.
-- Services before HTTP routes/controllers.
-- Route controllers before templates and client UI.
-- Story complete and verified before declaring checkpoint passed.
-
-### Parallel Opportunities
-
-- **Phase 1**: T001 and T002 can execute in parallel.
-- **Phase 2**: T004 and T005 can execute in parallel while T003 is prepared.
-- **Phase 3**: T007 (service tests) and T008 (route tests) can be written in parallel.
-- **Phase 4**: T015 (service tests) and T016 (route tests) can be written in parallel.
-- **Phase 5**: T020 (service tests) and T021 (route tests) can be written in parallel; templates T024 and T025 can be authored in parallel.
-- **Across Stories**: Once Phase 2 is complete, US1/US2 (Task domain) and US3 (Auth domain) can be developed independently.
+### Reglas de Ejecución Dentro de Cada Historia
+1. Escribir pruebas unitarias y de servicio (en rojo) antes de implementar lógica de dominio.
+2. Escribir pruebas funcionales de endpoints (en rojo) antes de crear rutas HTTP.
+3. Servicios de dominio antes de blueprints HTTP.
+4. Blueprints HTTP antes de plantillas Jinja2 / frontend.
 
 ---
 
-## Parallel Example: User Story 1
+## Parallel Opportunities
 
-```bash
-# Launch test creation tasks together (Test-First):
-Task: "T007 [P] [US1] Write failing service tests for soft delete in tests/services/test_task_service.py"
-Task: "T008 [P] [US1] Write failing functional tests for delete endpoint in tests/functional/test_task_routes.py"
-```
-
-## Parallel Example: User Story 3
-
-```bash
-# Launch test creation tasks together:
-Task: "T020 [P] [US3] Write failing service tests for password reset in tests/services/test_user_service.py"
-Task: "T021 [P] [US3] Write failing functional tests for auth recovery endpoints in tests/functional/test_auth_routes.py"
-
-# Launch templates creation together:
-Task: "T024 [P] [US3] Create password recovery request template in src/taskcontrol/templates/auth/forgot_password.html"
-Task: "T025 [P] [US3] Create password reset confirmation template in src/taskcontrol/templates/auth/reset_password.html"
-```
+- **Setup Tasks**: T002 y T003 pueden ejecutarse en paralelo.
+- **Foundational Tasks**: T005 y T007 pueden ejecutarse en paralelo con T004.
+- **Pruebas por Historia**: T008 y T009 (US1), T014 y T015 (US2), T019 y T020 (US3) pueden escribirse en paralelo.
+- **Plantillas Frontend**: T025 y T026 pueden diseñarse en paralelo.
 
 ---
 
 ## Implementation Strategy
 
-### MVP First (User Story 1 Only)
-1. Complete Phase 1: Setup (`config.py`, audit actions).
-2. Complete Phase 2: Foundational (Task schema extension, `PasswordResetToken`, Alembic migration).
-3. Complete Phase 3: User Story 1 (Soft delete).
-4. **STOP and VALIDATE**: Run `pytest tests/services/test_task_service.py` and `pytest tests/functional/test_task_routes.py`.
-5. Verify soft delete behaves with zero physical deletions and complete audit logging.
+### MVP First (User Story 1: Soft Delete)
+1. Completar Setup (Fase 1) y Foundational (Fase 2: modelos y migraciones).
+2. Implementar US1 (Eliminación lógica HU-05) con ciclo test-first.
+3. **Validar MVP del Incremento 2**: Eliminar tareas sin borrado físico verificado en base de datos y auditoría.
 
-### Incremental Delivery
-1. Foundation complete → Base ready.
-2. Deliver US1 (Soft Delete) → Test independently.
-3. Deliver US2 (Reopen Task) → Test independently (validates state transition `completed` → `pending` and `TASK_REOPENED` log).
-4. Deliver US3 (Password Recovery) → Test independently (validates neutral response, SHA-256 tokens, 30-min expiration, single-use invalidation).
-5. Complete Phase 6: Polish & Cross-Cutting Concerns → Run full test suite.
+### Entrega Incremental
+1. Añadir US2 (Reapertura HU-06) completando el ciclo de vida de tareas.
+2. Añadir US3 (Recuperación de contraseña HU-14) completando el acceso y autenticación.
+3. Ejecutar Fase 6 (Polish & E2E) con `pytest -v` garantizando cero regresión sobre las 29 pruebas del Incremento 1.
