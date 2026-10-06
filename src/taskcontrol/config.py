@@ -17,6 +17,9 @@ class Config:
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_PERMANENT = False
+    PASSWORD_RESET_TOKEN_EXPIRATION_MINUTES = int(
+        os.getenv("PASSWORD_RESET_TOKEN_EXPIRATION_MINUTES", "30")
+    )
 
 
 class TestingConfig(Config):

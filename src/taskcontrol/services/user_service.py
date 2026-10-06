@@ -14,6 +14,11 @@ class DuplicateEmailError(Exception):
     pass
 
 
+class PasswordResetError(Exception):
+    """Excepción para fallos en el flujo de recuperación de contraseña."""
+    pass
+
+
 class UserService:
     """Lógica de negocio para cuentas de usuario y autenticación."""
 
