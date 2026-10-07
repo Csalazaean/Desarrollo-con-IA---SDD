@@ -9,7 +9,12 @@ from flask import (
     session,
     jsonify,
 )
+from src.taskcontrol.models.task import Task
 from src.taskcontrol.routes.auth_helpers import login_required
+from src.taskcontrol.services.category_service import (
+    CategoryService,
+    CategoryNotFoundError,
+)
 from src.taskcontrol.services.task_service import (
     TaskService,
     TaskValidationError,
@@ -46,8 +51,15 @@ def list_tasks():
     """Listado y filtrado de tareas del usuario autenticado (HU-02)."""
     user_id = session["user_id"]
     status_filter = request.args.get("status")
+    category_filter = request.args.get("category_id")
+    sort = request.args.get("sort")
 
-    tasks = TaskService.get_user_tasks(user_id=user_id, status=status_filter)
+    tasks = TaskService.get_user_tasks(
+        user_id=user_id,
+        status=status_filter,
+        category_id=category_filter,
+        sort=sort,
+    )
 
     if _is_json_request():
         return (
@@ -58,6 +70,11 @@ def list_tasks():
                         "tasks": [t.to_dict() for t in tasks],
                         "count": len(tasks),
                         "filter": status_filter,
+                        "applied_filters": {
+                            "status": status_filter,
+                            "category_id": category_filter,
+                            "sort": sort,
+                        },
                     },
                 }
             ),
@@ -65,7 +82,13 @@ def list_tasks():
         )
 
     return render_template(
-        "tasks/index.html", tasks=tasks, current_status=status_filter
+        "tasks/index.html",
+        tasks=tasks,
+        current_status=status_filter,
+        current_category=category_filter,
+        current_sort=sort,
+        categories=CategoryService.get_user_categories(user_id),
+        priorities=Task.VALID_PRIORITIES,
     )
 
 
@@ -87,7 +110,18 @@ def create_task_route():
             title=title,
             description=description,
             due_date=due_date,
+            priority=data.get("priority") or None,
         )
+
+        # La categoría es opcional al crear; si viene, se valida igual que al reasignarla.
+        categoria_inicial = data.get("category_id")
+        if categoria_inicial:
+            try:
+                TaskService.assign_category_to_task(
+                    task_id=task.id, user_id=user_id, category_id=categoria_inicial
+                )
+            except CategoryNotFoundError:
+                flash("La categoría indicada no existe; la tarea se creó sin categoría.", "error")
 
         if _is_json_request():
             return (
@@ -386,3 +420,107 @@ def reopen_task_route(task_id: int):
             )
         flash(str(e), "error")
         return redirect(url_for("tasks.list_tasks")), 400
+
+
+@tasks_bp.route("/<int:task_id>/priority", methods=["POST"])
+@login_required
+def update_priority_route(task_id: int):
+    """Cambio de prioridad de una tarea (HU-07)."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or request.form
+    priority = data.get("priority")
+
+    try:
+        task = TaskService.update_task_priority(
+            task_id=task_id, user_id=user_id, priority=priority
+        )
+
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Prioridad actualizada exitosamente",
+                        "data": {"task_id": task.id, "priority": task.priority},
+                    }
+                ),
+                200,
+            )
+
+        flash("Prioridad actualizada.", "success")
+        return redirect(url_for("tasks.list_tasks"))
+
+    except TaskNotFoundError:
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "TASK_NOT_FOUND",
+                        "message": "Tarea no encontrada",
+                    }
+                ),
+                404,
+            )
+        flash("La tarea no existe o no tienes permiso para modificarla.", "error")
+        return redirect(url_for("tasks.list_tasks")), 404
+
+    except TaskValidationError as e:
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "INVALID_PRIORITY",
+                        "message": str(e),
+                    }
+                ),
+                400,
+            )
+        flash(str(e), "error")
+        return redirect(url_for("tasks.list_tasks")), 400
+
+
+@tasks_bp.route("/<int:task_id>/category", methods=["POST"])
+@login_required
+def assign_category_route(task_id: int):
+    """Asignación o desvinculación de categoría de una tarea (HU-08)."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or request.form
+    category_id = data.get("category_id")
+
+    try:
+        task = TaskService.assign_category_to_task(
+            task_id=task_id, user_id=user_id, category_id=category_id
+        )
+
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Categoría asignada correctamente",
+                        "data": {"task_id": task.id, "category_id": task.category_id},
+                    }
+                ),
+                200,
+            )
+
+        flash("Categoría actualizada.", "success")
+        return redirect(url_for("tasks.list_tasks"))
+
+    except (TaskNotFoundError, CategoryNotFoundError) as e:
+        # Tarea ajena y categoría ajena responden igual: no se confirma su existencia.
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "NOT_FOUND",
+                        "message": str(e),
+                    }
+                ),
+                404,
+            )
+        flash("La tarea o la categoría no existen o no te pertenecen.", "error")
+        return redirect(url_for("tasks.list_tasks")), 404

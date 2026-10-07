@@ -14,6 +14,7 @@
                 {% if session.get('user_id') %}
                     <span class="user-greeting">👤 {{ session.get('user_email', 'Usuario') }}</span>
                     <a href="{{ url_for('tasks.list_tasks') }}">Mis Tareas</a>
+                    <a href="{{ url_for('categories.list_categories') }}">Categorías</a>
                     <form action="{{ url_for('auth.logout') }}" method="POST" class="inline-form">
                         <button type="submit" class="btn btn-secondary btn-sm">Cerrar Sesión</button>
                     </form>
