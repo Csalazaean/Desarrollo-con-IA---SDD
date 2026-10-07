@@ -27,6 +27,15 @@ class Task(db.Model):
         nullable=True,
         index=True,
     )
+    # Creador (`user_id`) y asignado (`assigned_to_id`) son columnas distintas:
+    # el creador es inmutable y conserva el control de la tarea, mientras que la
+    # asignación puede cambiar o retirarse sin alterar la propiedad (plan.md §2.1).
+    assigned_to_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     title = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text, nullable=True)
     due_date = db.Column(db.Date, nullable=True)
@@ -47,6 +56,15 @@ class Task(db.Model):
     )
 
     category = db.relationship("Category", back_populates="tasks")
+    assignee = db.relationship("User", foreign_keys=[assigned_to_id])
+
+    @property
+    def creator_email(self):
+        return self.user.email if self.user else None
+
+    @property
+    def assignee_email(self):
+        return self.assignee.email if self.assignee else None
 
     @property
     def is_overdue(self) -> bool:
@@ -65,8 +83,14 @@ class Task(db.Model):
             return False
         return self.due_date < datetime.now(timezone.utc).date()
 
-    def to_dict(self):
-        return {
+    def to_dict(self, viewer_id: int = None):
+        """Serializa la tarea.
+
+        `viewer_id` permite que el backend resuelva la autoría respecto de quien
+        consulta, para que la plantilla solo pinte el distintivo en vez de deducirla
+        por su cuenta (FR-005).
+        """
+        datos = {
             "id": self.id,
             "user_id": self.user_id,
             "title": self.title,
@@ -77,8 +101,17 @@ class Task(db.Model):
             "is_overdue": self.is_overdue,
             "category": self.category.to_dict() if self.category else None,
             "category_id": self.category_id,
+            "assigned_to_id": self.assigned_to_id,
+            "assignee_email": self.assignee_email,
+            "creator_email": self.creator_email,
             "is_deleted": self.is_deleted,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+        if viewer_id is not None:
+            datos["is_mine"] = self.user_id == viewer_id
+            datos["is_assigned_to_me"] = self.assigned_to_id == viewer_id
+
+        return datos

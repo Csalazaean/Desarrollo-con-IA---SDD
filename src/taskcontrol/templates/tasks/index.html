@@ -47,8 +47,15 @@
         </form>
     </div>
 
-    <!-- Filtros de Estado (HU-02) -->
+    <!-- Filtro por Autoría / Asignación (HU-10, FR-006) -->
     <div class="filters">
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, category_id=current_category, sort=current_sort) }}" class="filter-btn {% if not current_scope or current_scope == 'all' %}active{% endif %}">Todas</a>
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, category_id=current_category, sort=current_sort, scope='created') }}" class="filter-btn {% if current_scope == 'created' %}active{% endif %}">Creadas por mí</a>
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, category_id=current_category, sort=current_sort, scope='assigned') }}" class="filter-btn {% if current_scope == 'assigned' %}active{% endif %}">Asignadas a mí</a>
+    </div>
+
+    <!-- Filtros de Estado (HU-02) -->
+    <div class="filters" style="margin-top: 0.5rem;">
         <a href="{{ url_for('tasks.list_tasks', category_id=current_category, sort=current_sort) }}" class="filter-btn {% if not current_status %}active{% endif %}">Todas</a>
         <a href="{{ url_for('tasks.list_tasks', status='pending', category_id=current_category, sort=current_sort) }}" class="filter-btn {% if current_status == 'pending' %}active{% endif %}">Pendientes</a>
         <a href="{{ url_for('tasks.list_tasks', status='in_progress', category_id=current_category, sort=current_sort) }}" class="filter-btn {% if current_status == 'in_progress' %}active{% endif %}">En Progreso</a>
@@ -98,6 +105,12 @@
                             {% if task.is_overdue %}
                                 <span class="badge badge-overdue">Vencida</span>
                             {% endif %}
+                            {# Autoría resuelta en backend: la plantilla solo la pinta (FR-005). #}
+                            {% if task.user_id == current_user_id %}
+                                <span class="badge badge-mine">Creada por mí</span>
+                            {% else %}
+                                <span class="badge badge-assigned-to-me">Asignada por {{ task.creator_email }}</span>
+                            {% endif %}
                             <h4 style="font-size: 1.1rem; font-weight: 600;">{{ task.title }}</h4>
                         </div>
                         {% if task.description %}
@@ -109,7 +122,10 @@
                             {% endif %}
                             <span>🕒 Creada: {{ task.created_at.strftime('%Y-%m-%d') if task.created_at else '' }}</span>
 
-                            {% if not task.is_deleted %}
+                            {# Los controles de edición se muestran solo al creador: el backend
+                               restringe las mutaciones a quien creó la tarea, así que ofrecerlos
+                               al asignatario produciría botones que siempre fallan. #}
+                            {% if not task.is_deleted and task.user_id == current_user_id %}
                                 <form action="{{ url_for('tasks.update_priority_route', task_id=task.id) }}" method="POST" class="inline-form">
                                     <select name="priority" class="form-control" style="width: auto; padding: 0.2rem 0.4rem; font-size: 0.8rem;" onchange="this.form.submit();">
                                         <option value="high" {% if task.priority == 'high' %}selected{% endif %}>Alta</option>
@@ -125,12 +141,21 @@
                                         {% endfor %}
                                     </select>
                                 </form>
+
+                                {# Solo el creador asigna su tarea; el backend lo vuelve a comprobar. #}
+                                <form action="{{ url_for('tasks.assign_task_route', task_id=task.id) }}" method="POST" class="inline-form" style="display: flex; gap: 0.25rem; align-items: center;">
+                                    <input type="email" name="assignee_email" class="form-control" value="{{ task.assignee_email or '' }}" placeholder="Asignar a (correo)" style="width: 12rem; padding: 0.2rem 0.4rem; font-size: 0.8rem;">
+                                    <button type="submit" class="btn btn-secondary btn-sm">Asignar</button>
+                                </form>
+                            {% elif task.assignee_email %}
+                                <span>👤 Asignada a: {{ task.assignee_email }}</span>
                             {% endif %}
                         </div>
                     </div>
 
-                    <!-- Acciones de Estado y Edición (HU-03, HU-04) -->
+                    <!-- Acciones de Estado y Edición (HU-03, HU-04). Solo para el creador. -->
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
+                      {% if task.user_id == current_user_id %}
                         {% if task.status == 'pending' %}
                             <form action="{{ url_for('tasks.update_status_route', task_id=task.id) }}" method="POST" class="inline-form">
                                 <input type="hidden" name="status" value="in_progress">
@@ -159,6 +184,9 @@
                         <form action="{{ url_for('tasks.delete_task_route', task_id=task.id) }}" method="POST" class="inline-form">
                             <button type="submit" class="btn btn-danger btn-sm">Eliminar</button>
                         </form>
+                      {% else %}
+                        <span style="font-size: 0.8rem; color: var(--text-muted);">Solo lectura</span>
+                      {% endif %}
                     </div>
                 </div>
             {% endfor %}

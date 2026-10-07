@@ -1,6 +1,8 @@
 from datetime import date, datetime, timezone
 from src.taskcontrol.extensions import db
+from src.taskcontrol.models.audit import AuditLog
 from src.taskcontrol.models.task import Task
+from src.taskcontrol.models.user import User
 from src.taskcontrol.services.audit_service import AuditService
 
 
@@ -21,6 +23,20 @@ class InvalidStateTransitionError(Exception):
 
 class TaskAlreadyDeletedError(Exception):
     """Operación rechazada porque la tarea ya fue eliminada lógicamente."""
+    pass
+
+
+class NotTaskOwnerError(Exception):
+    """El usuario existe y la tarea también, pero no es su creador.
+
+    Se distingue de TaskNotFoundError porque el contrato exige 403 y no 404:
+    lo que falta es permiso, no la tarea.
+    """
+    pass
+
+
+class AssigneeNotFoundError(Exception):
+    """El correo indicado no corresponde a ningún usuario registrado."""
     pass
 
 
@@ -91,13 +107,23 @@ class TaskService:
         include_deleted: bool = False,
         category_id=None,
         sort: str = None,
+        scope: str = None,
     ):
-        """Lista las tareas del usuario con filtrado y ordenamiento opcionales.
+        """Lista las tareas visibles para el usuario con filtros y orden opcionales.
 
+        Desde el Incremento 4 el listado incluye tanto las tareas creadas por el
+        usuario como las que le fueron asignadas (`scope='all'`, por defecto).
         Los filtros se aplican antes del orden, de modo que filtrar por estado y
-        ordenar por prioridad se combinan sin pisarse (FR-004).
+        ordenar por prioridad se combinan sin pisarse.
         """
-        query = Task.query.filter_by(user_id=user_id)
+        if scope == "created":
+            query = Task.query.filter(Task.user_id == user_id)
+        elif scope == "assigned":
+            query = Task.query.filter(Task.assigned_to_id == user_id)
+        else:
+            query = Task.query.filter(
+                db.or_(Task.user_id == user_id, Task.assigned_to_id == user_id)
+            )
         if not include_deleted:
             query = query.filter_by(is_deleted=False)
         if status in {"pending", "in_progress", "completed"}:
@@ -209,6 +235,72 @@ class TaskService:
             action="STATUS_CHANGED",
             entity_id=task.id,
             details={"previous_status": old_status, "current_status": new_status},
+        )
+        db.session.commit()
+
+        return task
+
+    @classmethod
+    def assign_task_to_user(cls, task_id: int, actor_id: int, assignee_email: str) -> Task:
+        """Asigna, reasigna o desasigna una tarea (HU-10).
+
+        Todo ocurre en una sola transacción —validación, asignación, notificación y
+        auditoría— para que no pueda quedar una tarea asignada de la que el
+        destinatario nunca se entera (plan.md §4, FR-008).
+
+        Un correo vacío retira la asignación (FR-003).
+        """
+        from src.taskcontrol.services.notification_service import NotificationService
+
+        task = Task.query.filter_by(id=task_id).first()
+        if not task or task.is_deleted:
+            raise TaskNotFoundError("Tarea no encontrada")
+
+        # Solo el creador decide quién ejecuta su tarea; un tercero recibe 403.
+        if task.user_id != actor_id:
+            raise NotTaskOwnerError("Solo el creador de la tarea puede asignarla")
+
+        anterior = task.assigned_to_id
+
+        if not assignee_email or not str(assignee_email).strip():
+            task.assigned_to_id = None
+            AuditService.log_event(
+                actor_id=actor_id,
+                action=AuditLog.ACTION_TASK_UNASSIGNED,
+                entity_id=task.id,
+                details={"previous_assignee_id": anterior},
+            )
+            db.session.commit()
+            return task
+
+        # El destinatario se resuelve contra la base de datos: un selector del
+        # frontend no prueba nada, la petición puede fabricarse a mano (FR-002).
+        email_limpio = str(assignee_email).strip().lower()
+        destinatario = User.query.filter_by(email=email_limpio).first()
+        if not destinatario:
+            raise AssigneeNotFoundError(
+                f"No existe un usuario registrado con el correo '{email_limpio}'"
+            )
+
+        task.assigned_to_id = destinatario.id
+
+        # Autoasignarse no genera notificación: sería ruido para el propio actor.
+        notificada = destinatario.id != actor_id
+        if notificada:
+            NotificationService.create_assignment_notification(
+                recipient_id=destinatario.id, sender_id=actor_id, task=task
+            )
+
+        AuditService.log_event(
+            actor_id=actor_id,
+            action=AuditLog.ACTION_TASK_ASSIGNED,
+            entity_id=task.id,
+            details={
+                "previous_assignee_id": anterior,
+                "assigned_to_id": destinatario.id,
+                "assignee_email": destinatario.email,
+                "notification_created": notificada,
+            },
         )
         db.session.commit()
 
