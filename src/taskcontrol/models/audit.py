@@ -20,6 +20,8 @@ class AuditLog(db.Model):
     ACTION_CATEGORY_CREATED = "CATEGORY_CREATED"
     ACTION_CATEGORY_UPDATED = "CATEGORY_UPDATED"
     ACTION_CATEGORY_DELETED = "CATEGORY_DELETED"
+    ACTION_TASK_ASSIGNED = "TASK_ASSIGNED"
+    ACTION_TASK_UNASSIGNED = "TASK_UNASSIGNED"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     actor_id = db.Column(db.Integer, nullable=False, index=True)

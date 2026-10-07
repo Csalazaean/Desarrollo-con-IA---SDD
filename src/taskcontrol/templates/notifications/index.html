@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Notificaciones - TaskControl{% endblock %}
+
+{% block content %}
+<div class="tasks-page">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <h2>Notificaciones{% if unread_count %} <span class="notification-badge">{{ unread_count }}</span>{% endif %}</h2>
+        {% if unread_count %}
+            <form action="{{ url_for('notifications.mark_all_read_route') }}" method="POST" class="inline-form">
+                <button type="submit" class="btn btn-secondary btn-sm">Marcar todas como leídas</button>
+            </form>
+        {% endif %}
+    </div>
+
+    <div class="tasks-list">
+        {% if notifications %}
+            {% for notificacion in notifications %}
+                <div class="task-card" {% if not notificacion.is_read %}style="border-left: 3px solid var(--primary);"{% endif %}>
+                    <div style="flex: 1;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.35rem;">
+                            {% if not notificacion.is_read %}
+                                <span class="badge badge-pending">Nueva</span>
+                            {% endif %}
+                            <span style="font-weight: {{ '600' if not notificacion.is_read else '400' }};">{{ notificacion.message }}</span>
+                        </div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted);">
+                            🕒 {{ notificacion.created_at.strftime('%Y-%m-%d %H:%M') if notificacion.created_at else '' }}
+                            {% if notificacion.is_read and notificacion.read_at %}
+                                · Leída el {{ notificacion.read_at.strftime('%Y-%m-%d %H:%M') }}
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        {% if notificacion.task_id %}
+                            <a href="{{ url_for('tasks.list_tasks') }}" class="btn btn-secondary btn-sm">Ver tareas</a>
+                        {% endif %}
+                        {% if not notificacion.is_read %}
+                            <form action="{{ url_for('notifications.mark_read_route', notification_id=notificacion.id) }}" method="POST" class="inline-form">
+                                <button type="submit" class="btn btn-primary btn-sm">Marcar como leída</button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div style="text-align: center; padding: 3rem 1rem; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); color: var(--text-muted);">
+                <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">No tienes notificaciones.</p>
+                <p style="font-size: 0.9rem;">Aquí aparecerán los avisos cuando alguien te asigne una tarea.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <p style="margin-top: 1.5rem; font-size: 0.85rem; color: var(--text-muted);">
+        Las notificaciones leídas <strong>se conservan</strong> en este historial; no se borran.
+    </p>
+</div>
+{% endblock %}

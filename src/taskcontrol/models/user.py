@@ -14,8 +14,17 @@ class User(db.Model):
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
-    # Relación 1 a N con Task
-    tasks = db.relationship("Task", backref="user", lazy=True, cascade="all, delete-orphan")
+    # Relación 1 a N con Task (tareas creadas).
+    # `foreign_keys` es obligatorio desde el Incremento 4: Task apunta dos veces a
+    # users (user_id como creador y assigned_to_id como asignado) y sin indicarlo
+    # SQLAlchemy no puede decidir cuál de las dos define esta relación.
+    tasks = db.relationship(
+        "Task",
+        backref="user",
+        lazy=True,
+        cascade="all, delete-orphan",
+        foreign_keys="Task.user_id",
+    )
 
     def to_dict(self):
         return {
