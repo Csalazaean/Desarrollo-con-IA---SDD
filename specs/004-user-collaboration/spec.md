@@ -8,6 +8,14 @@
 
 **Input**: User description: "Especifica el cuarto incremento funcional de TaskControl: colaboración entre usuarios. Este incremento cubre HU-10 y HU-11 del backlog, y asume que los Incrementos 1 a 3 ya están implementados."
 
+## Clarifications
+
+### Session 2026-10-06
+
+- Q: Cuando un creador asigna una tarea, ¿el sistema debe aceptar el correo electrónico del destinatario, su ID numérico, o ambos? → A: Solo correo electrónico (`assigned_to_email`); el backend resuelve el `user_id` internamente.
+- Q: Cuando el creador retira la asignación de una tarea, ¿debe generarse una notificación interna para el usuario desasignado? → A: No — la desasignación es silenciosa, solo auditada en `AuditLog` (acción `TASK_UNASSIGNED`).
+- Q: SC-003 exige persistir la notificación "en menos de 100ms" — ¿se agrega una prueba de rendimiento dedicada? → A: No — se documenta como cumplido por diseño (escritura síncrona local a SQLite en el mismo request), sin prueba de rendimiento dedicada (Principio V, YAGNI).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Asignación Segura de Tareas entre Usuarios (HU-10) (Priority: P1)
@@ -61,10 +69,10 @@ Como usuario del sistema, quiero recibir una notificación interna dentro de la 
 
 ### Functional Requirements
 
-- **FR-001**: El sistema DEBE permitir al creador de una tarea asignar dicha tarea a otro usuario registrado en el sistema mediante su correo electrónico o identificador.
-- **FR-002**: El sistema DEBE validar obligatoriamente en el backend que el usuario asignatario exista en la base de datos antes de efectuar cualquier asignación; queda prohibido delegar esta validación exclusivamente a controles del frontend.
-- **FR-003**: El sistema DEBE permitir retirar la asignación de una tarea (dejarla sin usuario asignado).
-- **FR-004**: El sistema DEBE incluir las tareas asignadas en el listado principal de tareas (`/tasks`) del usuario asignatario, permitiéndole interactuar con ellas según las reglas de negocio.
+- **FR-001**: El sistema DEBE permitir al creador de una tarea asignar dicha tarea a otro usuario registrado en el sistema mediante el correo electrónico (`assigned_to_email`) del destinatario; el backend resuelve el `user_id` correspondiente (ver Clarifications, Session 2026-10-06).
+- **FR-002**: El sistema DEBE validar obligatoriamente en el backend que el correo electrónico indicado corresponda a un usuario existente en la base de datos antes de efectuar cualquier asignación; queda prohibido delegar esta validación exclusivamente a controles del frontend.
+- **FR-003**: El sistema DEBE permitir retirar la asignación de una tarea (dejarla sin usuario asignado), registrando `TASK_UNASSIGNED` en el log de auditoría. Esta operación NUNCA genera una notificación interna para el usuario desasignado (ver Clarifications, Session 2026-10-06).
+- **FR-004**: El sistema DEBE incluir las tareas asignadas en el listado principal de tareas (`/tasks`) del usuario asignatario, permitiéndole **exclusivamente cambiar el estado** de la tarea (pendiente/en progreso/completada, mismas reglas de transición del Incremento 1). El asignatario NO puede editar título/descripción, cambiar prioridad ni categoría, eliminar ni reasignar la tarea — esas acciones permanecen exclusivas del creador (hallazgo E1 de `/speckit-analyze`, resuelto 2026-10-06).
 - **FR-005**: El sistema DEBE distinguir visualmente en el listado de tareas entre las tareas creadas por el usuario autenticado y las tareas que le han sido asignadas por otros usuarios (mediante badges identificadores).
 - **FR-006**: El sistema DEBE proveer en el listado de tareas un mecanismo de filtrado por autoría/asignación con tres opciones: "Todas" (por defecto), "Creadas por mí" y "Asignadas a mí".
 - **FR-007**: El sistema DEBE registrar un evento de auditoría estructurado con la acción `TASK_ASSIGNED` ante cada asignación o reasignación, especificando `actor_id`, `entity_id` (tarea), `timestamp` y detalles del usuario asignado.
@@ -115,7 +123,7 @@ Como usuario del sistema, quiero recibir una notificación interna dentro de la 
 
 - **SC-001**: 0% de asignaciones permitidas hacia correos o IDs de usuarios que no existan en la base de datos (rechazo del 100% de peticiones inválidas en backend).
 - **SC-002**: El 100% de las tareas asignadas son visibles para el usuario destinatario en su pestaña "Asignadas a mí".
-- **SC-003**: El 100% de las asignaciones exitosas a terceros generan una notificación interna persistida en menos de 100ms.
+- **SC-003**: El 100% de las asignaciones exitosas a terceros generan una notificación interna persistida en la misma transacción síncrona (cumplido por diseño, sin prueba de rendimiento dedicada — ver Clarifications, Session 2026-10-06).
 - **SC-004**: Las notificaciones leídas conservan una tasa de retención del 100% en el historial del usuario (0% de borrado no intencionado tras lectura).
 - **SC-005**: El 100% de los cambios de asignación quedan registrados en el log de auditoría con actor, tarea, destinatario y fecha UTC.
 - **SC-006**: Cobertura de pruebas automatizadas del 100% en las reglas de autorización y persistencia de notificaciones antes del despliegue.

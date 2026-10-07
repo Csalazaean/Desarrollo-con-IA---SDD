@@ -1,9 +1,11 @@
 from datetime import date, datetime, timezone
-from sqlalchemy import case
+from sqlalchemy import case, or_
 from src.taskcontrol.extensions import db
 from src.taskcontrol.models.task import Task
+from src.taskcontrol.models.user import User
 from src.taskcontrol.services.audit_service import AuditService
 from src.taskcontrol.services.category_service import CategoryService
+from src.taskcontrol.services.notification_service import NotificationService
 
 
 class TaskValidationError(Exception):
@@ -33,6 +35,11 @@ class InvalidTaskStateTransitionError(Exception):
 
 class InvalidPriorityError(Exception):
     """Valor de prioridad fuera del conjunto permitido (high, medium, low)."""
+    pass
+
+
+class AssigneeNotFoundError(Exception):
+    """El correo indicado no corresponde a ningún usuario registrado."""
     pass
 
 
@@ -92,9 +99,18 @@ class TaskService:
         return task
 
     @classmethod
-    def get_user_tasks(cls, user_id: int, status: str = None, sort: str = None, category_id=None):
-        """Lista las tareas activas (no eliminadas) del usuario autenticado con filtrado y orden opcional."""
-        query = Task.query.filter_by(user_id=user_id, is_deleted=False)
+    def get_user_tasks(
+        cls, user_id: int, status: str = None, sort: str = None, category_id=None, view: str = "all"
+    ):
+        """Lista las tareas del usuario con filtrado por rol (creador/asignatario), estado, categoría y orden."""
+        query = Task.query.filter_by(is_deleted=False)
+        if view == "created":
+            query = query.filter(Task.user_id == user_id)
+        elif view == "assigned":
+            query = query.filter(Task.assigned_to_id == user_id)
+        else:  # 'all' (default): creador o asignatario
+            query = query.filter(or_(Task.user_id == user_id, Task.assigned_to_id == user_id))
+
         if status in {"pending", "in_progress", "completed"}:
             query = query.filter_by(status=status)
 
@@ -133,9 +149,22 @@ class TaskService:
         return task
 
     @classmethod
+    def _get_task_for_creator_or_assignee(cls, user_id: int, task_id: int) -> Task:
+        """Obtiene una tarea activa autorizando al creador O al asignatario (hallazgo E1 de /speckit-analyze:
+        el asignatario únicamente puede cambiar el estado, nunca editar/eliminar/repriorizar/reasignar)."""
+        task = Task.query.filter(
+            Task.id == task_id,
+            Task.is_deleted.is_(False),
+            or_(Task.user_id == user_id, Task.assigned_to_id == user_id),
+        ).first()
+        if not task:
+            raise TaskNotFoundError("Tarea no encontrada")
+        return task
+
+    @classmethod
     def update_task_status(cls, user_id: int, task_id: int, new_status: str) -> Task:
-        """Aplica una transición de estado a la tarea del usuario."""
-        task = cls.get_task_by_id(user_id=user_id, task_id=task_id)
+        """Aplica una transición de estado a la tarea; autoriza al creador o al asignatario (HU-10)."""
+        task = cls._get_task_for_creator_or_assignee(user_id=user_id, task_id=task_id)
 
         if new_status not in cls.VALID_TRANSITIONS.get(task.status, set()):
             raise InvalidStateTransitionError(
@@ -199,6 +228,55 @@ class TaskService:
             action="TASK_UPDATED",
             entity_id=task.id,
             details={"category_id": category_id},
+        )
+        db.session.commit()
+
+        return task
+
+    @classmethod
+    def assign_task(cls, task_id: int, user_id: int, assigned_to_email: str) -> Task:
+        """Asigna (o reasigna) una tarea propia a otro usuario por correo (HU-10)."""
+        task = cls.get_task_by_id(user_id=user_id, task_id=task_id)
+
+        clean_email = (assigned_to_email or "").strip().lower()
+        assignee = User.query.filter_by(email=clean_email).first()
+        if not assignee:
+            raise AssigneeNotFoundError(
+                "No existe un usuario registrado con ese correo electrónico"
+            )
+
+        task.assigned_to_id = assignee.id
+        db.session.commit()
+
+        AuditService.log_event(
+            actor_id=user_id,
+            action="TASK_ASSIGNED",
+            entity_id=task.id,
+            details={"assigned_to_email": assignee.email},
+        )
+        db.session.commit()
+
+        # Autoasignación: nunca se notifica (Edge Case)
+        if assignee.id != user_id:
+            NotificationService.create_notification(
+                recipient_id=assignee.id, sender_id=user_id, task=task
+            )
+
+        return task
+
+    @classmethod
+    def unassign_task(cls, task_id: int, user_id: int) -> Task:
+        """Retira la asignación de una tarea propia; nunca notifica (spec Clarifications Q2)."""
+        task = cls.get_task_by_id(user_id=user_id, task_id=task_id)
+
+        task.assigned_to_id = None
+        db.session.commit()
+
+        AuditService.log_event(
+            actor_id=user_id,
+            action="TASK_UNASSIGNED",
+            entity_id=task.id,
+            details={},
         )
         db.session.commit()
 

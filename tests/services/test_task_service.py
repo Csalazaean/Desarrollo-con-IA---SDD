@@ -1,5 +1,6 @@
 from datetime import date
 import pytest
+from src.taskcontrol.extensions import db
 from src.taskcontrol.services.user_service import UserService
 from src.taskcontrol.services.task_service import (
     TaskService,
@@ -9,6 +10,7 @@ from src.taskcontrol.services.task_service import (
     TaskAlreadyDeletedError,
     InvalidTaskStateTransitionError,
     InvalidPriorityError,
+    AssigneeNotFoundError,
 )
 from src.taskcontrol.models.audit import AuditLog
 
@@ -459,3 +461,178 @@ def test_task_due_today_not_overdue_until_day_ends(app, test_user_id):
             user_id=test_user_id, title="Tarea Hoy", due_date=today_utc
         )
         assert task.is_overdue is False
+
+
+# --- US1 (Incremento 4): Asignación Segura de Tareas entre Usuarios (HU-10) ---
+
+def test_assign_task_success_creates_notification_and_audit_log(app, test_user_id, second_user_id):
+    """Verifica asignación exitosa: audita TASK_ASSIGNED y genera una notificación para el asignatario."""
+    with app.app_context():
+        from src.taskcontrol.models.notification import Notification
+        from src.taskcontrol.models.user import User
+
+        second_user = db.session.get(User, second_user_id)
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea a Delegar")
+
+        assigned = TaskService.assign_task(
+            task_id=task.id, user_id=test_user_id, assigned_to_email=second_user.email
+        )
+        assert assigned.assigned_to_id == second_user_id
+
+        audit = AuditLog.query.filter_by(action="TASK_ASSIGNED", entity_id=task.id).first()
+        assert audit is not None
+        assert audit.actor_id == test_user_id
+
+        notification = Notification.query.filter_by(recipient_id=second_user_id).first()
+        assert notification is not None
+        assert notification.sender_id == test_user_id
+        assert notification.task_id == task.id
+
+
+def test_assign_task_to_nonexistent_email_rejected(app, test_user_id):
+    """Verifica que asignar a un correo no registrado se rechace (FR-002)."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea")
+        with pytest.raises(AssigneeNotFoundError):
+            TaskService.assign_task(
+                task_id=task.id, user_id=test_user_id, assigned_to_email="noexiste@example.com"
+            )
+
+
+def test_only_creator_can_assign_task(app, test_user_id, second_user_id):
+    """Verifica que un usuario no creador no pueda asignar la tarea de otro (Cero IDOR)."""
+    with app.app_context():
+        from src.taskcontrol.models.user import User
+
+        second_user = db.session.get(User, second_user_id)
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea de User 1")
+        with pytest.raises(TaskNotFoundError):
+            TaskService.assign_task(
+                task_id=task.id, user_id=second_user_id, assigned_to_email=second_user.email
+            )
+
+
+def test_self_assignment_succeeds_without_notification(app, test_user_id):
+    """Verifica que la autoasignación funcione pero no genere notificación (Edge Case)."""
+    with app.app_context():
+        from src.taskcontrol.models.notification import Notification
+        from src.taskcontrol.models.user import User
+
+        owner = db.session.get(User, test_user_id)
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Propia")
+
+        assigned = TaskService.assign_task(
+            task_id=task.id, user_id=test_user_id, assigned_to_email=owner.email
+        )
+        assert assigned.assigned_to_id == test_user_id
+        assert Notification.query.filter_by(recipient_id=test_user_id).count() == 0
+
+
+def test_unassign_task_success_no_notification_generated(app, test_user_id, second_user_id):
+    """Verifica que desasignar retire assigned_to_id, audite TASK_UNASSIGNED, y nunca notifique (clarify Q2)."""
+    with app.app_context():
+        from src.taskcontrol.models.notification import Notification
+        from src.taskcontrol.models.user import User
+
+        second_user = db.session.get(User, second_user_id)
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Asignada")
+        TaskService.assign_task(task_id=task.id, user_id=test_user_id, assigned_to_email=second_user.email)
+        Notification.query.delete()  # limpiar la notificación de la asignación inicial
+
+        unassigned = TaskService.unassign_task(task_id=task.id, user_id=test_user_id)
+        assert unassigned.assigned_to_id is None
+
+        audit = AuditLog.query.filter_by(action="TASK_UNASSIGNED", entity_id=task.id).first()
+        assert audit is not None
+        assert Notification.query.count() == 0
+
+
+def test_assigned_task_visible_in_assignee_task_list(app, test_user_id, second_user_id):
+    """Verifica que la tarea asignada aparezca en el listado del asignatario (SC-002)."""
+    with app.app_context():
+        from src.taskcontrol.models.user import User
+
+        second_user = db.session.get(User, second_user_id)
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Visible para B")
+        TaskService.assign_task(task_id=task.id, user_id=test_user_id, assigned_to_email=second_user.email)
+
+        tasks_b = TaskService.get_user_tasks(user_id=second_user_id)
+        assert any(t.id == task.id for t in tasks_b)
+
+
+def test_get_user_tasks_view_created_vs_assigned_vs_all(app, test_user_id, second_user_id):
+    """Verifica el filtro view='created'/'assigned'/'all' del listado."""
+    with app.app_context():
+        from src.taskcontrol.models.user import User
+
+        second_user = db.session.get(User, second_user_id)
+        created_task = TaskService.create_task(user_id=test_user_id, title="Creada por mí")
+        assigned_task = TaskService.create_task(user_id=second_user_id, title="Asignada a mí")
+        TaskService.assign_task(
+            task_id=assigned_task.id, user_id=second_user_id, assigned_to_email=(
+                db.session.get(User, test_user_id).email
+            )
+        )
+
+        created = TaskService.get_user_tasks(user_id=test_user_id, view="created")
+        assigned = TaskService.get_user_tasks(user_id=test_user_id, view="assigned")
+        all_tasks = TaskService.get_user_tasks(user_id=test_user_id, view="all")
+
+        assert [t.id for t in created] == [created_task.id]
+        assert [t.id for t in assigned] == [assigned_task.id]
+        assert {t.id for t in all_tasks} == {created_task.id, assigned_task.id}
+
+
+def test_reassignment_notifies_new_assignee_and_old_assignee_loses_access(app, test_user_id, second_user_id):
+    """Verifica reasignación sucesiva: nueva notificación, y el asignatario anterior deja de verla (Edge Case)."""
+    with app.app_context():
+        from src.taskcontrol.models.notification import Notification
+        from src.taskcontrol.models.user import User
+
+        third_user = UserService.register_user("thirduser@example.com", "Password123!")
+        second_user = db.session.get(User, second_user_id)
+
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Reasignada")
+        TaskService.assign_task(task_id=task.id, user_id=test_user_id, assigned_to_email=second_user.email)
+        TaskService.assign_task(task_id=task.id, user_id=test_user_id, assigned_to_email=third_user.email)
+
+        assert Notification.query.filter_by(recipient_id=third_user.id).count() == 1
+
+        tasks_b = TaskService.get_user_tasks(user_id=second_user_id, view="assigned")
+        assert task.id not in [t.id for t in tasks_b]
+
+
+def test_assignee_can_update_task_status(app, test_user_id, second_user_id):
+    """Verifica que el asignatario pueda cambiar el estado de la tarea delegada (hallazgo E1 de /speckit-analyze)."""
+    with app.app_context():
+        from src.taskcontrol.models.user import User
+
+        second_user = db.session.get(User, second_user_id)
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Delegada")
+        TaskService.assign_task(task_id=task.id, user_id=test_user_id, assigned_to_email=second_user.email)
+
+        updated = TaskService.update_task_status(
+            user_id=second_user_id, task_id=task.id, new_status="in_progress"
+        )
+        assert updated.status == "in_progress"
+
+
+def test_assignee_cannot_edit_delete_priority_category_or_reassign_task(app, test_user_id, second_user_id):
+    """Verifica que el asignatario NO pueda editar, eliminar, repriorizar, recategorizar ni reasignar (hallazgo E1)."""
+    with app.app_context():
+        from src.taskcontrol.models.user import User
+
+        second_user = db.session.get(User, second_user_id)
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Protegida")
+        TaskService.assign_task(task_id=task.id, user_id=test_user_id, assigned_to_email=second_user.email)
+
+        with pytest.raises(TaskNotFoundError):
+            TaskService.update_task_details(user_id=second_user_id, task_id=task.id, title="Hackeada")
+        with pytest.raises(TaskNotFoundError):
+            TaskService.update_task_priority(user_id=second_user_id, task_id=task.id, priority="high")
+        with pytest.raises(TaskNotFoundError):
+            TaskService.delete_task(user_id=second_user_id, task_id=task.id)
+        with pytest.raises(TaskNotFoundError):
+            TaskService.assign_task(
+                task_id=task.id, user_id=second_user_id, assigned_to_email=second_user.email
+            )

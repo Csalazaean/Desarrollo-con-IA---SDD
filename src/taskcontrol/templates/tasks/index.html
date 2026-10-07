@@ -38,12 +38,19 @@
         </form>
     </div>
 
-    <!-- Filtros de Estado (HU-02) -->
+    <!-- Pestañas por Rol (HU-10) -->
     <div class="filters">
-        <a href="{{ url_for('tasks.list_tasks', sort=current_sort) }}" class="filter-btn {% if not current_status %}active{% endif %}">Todas</a>
-        <a href="{{ url_for('tasks.list_tasks', status='pending', sort=current_sort) }}" class="filter-btn {% if current_status == 'pending' %}active{% endif %}">Pendientes</a>
-        <a href="{{ url_for('tasks.list_tasks', status='in_progress', sort=current_sort) }}" class="filter-btn {% if current_status == 'in_progress' %}active{% endif %}">En Progreso</a>
-        <a href="{{ url_for('tasks.list_tasks', status='completed', sort=current_sort) }}" class="filter-btn {% if current_status == 'completed' %}active{% endif %}">Completadas</a>
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, sort=current_sort, view='all') }}" class="filter-btn {% if current_view == 'all' or not current_view %}active{% endif %}">Todas</a>
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, sort=current_sort, view='created') }}" class="filter-btn {% if current_view == 'created' %}active{% endif %}">Creadas por mí</a>
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, sort=current_sort, view='assigned') }}" class="filter-btn {% if current_view == 'assigned' %}active{% endif %}">Asignadas a mí</a>
+    </div>
+
+    <!-- Filtros de Estado (HU-02) -->
+    <div class="filters" style="margin-top: 0.5rem;">
+        <a href="{{ url_for('tasks.list_tasks', sort=current_sort, view=current_view) }}" class="filter-btn {% if not current_status %}active{% endif %}">Todas</a>
+        <a href="{{ url_for('tasks.list_tasks', status='pending', sort=current_sort, view=current_view) }}" class="filter-btn {% if current_status == 'pending' %}active{% endif %}">Pendientes</a>
+        <a href="{{ url_for('tasks.list_tasks', status='in_progress', sort=current_sort, view=current_view) }}" class="filter-btn {% if current_status == 'in_progress' %}active{% endif %}">En Progreso</a>
+        <a href="{{ url_for('tasks.list_tasks', status='completed', sort=current_sort, view=current_view) }}" class="filter-btn {% if current_status == 'completed' %}active{% endif %}">Completadas</a>
     </div>
 
     <!-- Ordenamiento por Prioridad (HU-07) -->
@@ -86,6 +93,11 @@
                             {% if task.is_overdue %}
                                 <span class="badge badge-overdue">⚠️ Vencida</span>
                             {% endif %}
+                            {% if task.user_id == current_user_id %}
+                                <span class="badge badge-pending">Creada por mí</span>
+                            {% else %}
+                                <span class="badge badge-in_progress">Asignada por {{ task.user.email }}</span>
+                            {% endif %}
                             <h4 style="font-size: 1.1rem; font-weight: 600;">{{ task.title }}</h4>
                         </div>
                         {% if task.description %}
@@ -99,16 +111,31 @@
                             {% if task.category %}
                                 <span>🏷️ {{ task.category.name }}</span>
                             {% endif %}
+                            {% if task.assigned_to_id %}
+                                <span>👤 Asignada a: {{ task.assignee.email }}</span>
+                            {% endif %}
                         </div>
-                        {% if categories %}
-                            <form action="{{ url_for('tasks.assign_category_route', task_id=task.id) }}" method="POST" class="inline-form" style="margin-top: 0.5rem;">
-                                <select name="category_id" class="form-control" style="display: inline-block; width: auto;" onchange="this.form.submit()">
-                                    <option value="" {% if not task.category %}selected{% endif %}>Sin categoría</option>
-                                    {% for category in categories %}
-                                        <option value="{{ category.id }}" {% if task.category and task.category.id == category.id %}selected{% endif %}>{{ category.name }}</option>
-                                    {% endfor %}
-                                </select>
-                            </form>
+                        {% if task.user_id == current_user_id %}
+                            {% if categories %}
+                                <form action="{{ url_for('tasks.assign_category_route', task_id=task.id) }}" method="POST" class="inline-form" style="margin-top: 0.5rem;">
+                                    <select name="category_id" class="form-control" style="display: inline-block; width: auto;" onchange="this.form.submit()">
+                                        <option value="" {% if not task.category %}selected{% endif %}>Sin categoría</option>
+                                        {% for category in categories %}
+                                            <option value="{{ category.id }}" {% if task.category and task.category.id == category.id %}selected{% endif %}>{{ category.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </form>
+                            {% endif %}
+                            {% if task.assigned_to_id %}
+                                <form action="{{ url_for('tasks.unassign_task_route', task_id=task.id) }}" method="POST" class="inline-form" style="margin-top: 0.5rem;" data-confirm="¿Retirar la asignación de esta tarea?">
+                                    <button type="submit" class="btn btn-secondary btn-sm">Retirar asignación</button>
+                                </form>
+                            {% else %}
+                                <form action="{{ url_for('tasks.assign_task_route', task_id=task.id) }}" method="POST" class="inline-form" style="margin-top: 0.5rem;">
+                                    <input type="email" name="assigned_to_email" class="form-control" style="display: inline-block; width: auto;" placeholder="correo@ejemplo.com" required>
+                                    <button type="submit" class="btn btn-secondary btn-sm">Asignar</button>
+                                </form>
+                            {% endif %}
                         {% endif %}
                     </div>
 
@@ -138,11 +165,13 @@
                             </form>
                         {% endif %}
 
-                        <a href="{{ url_for('tasks.edit_task_route', task_id=task.id) }}" class="btn btn-secondary btn-sm">Editar</a>
+                        {% if task.user_id == current_user_id %}
+                            <a href="{{ url_for('tasks.edit_task_route', task_id=task.id) }}" class="btn btn-secondary btn-sm">Editar</a>
 
-                        <form action="{{ url_for('tasks.delete_task_route', task_id=task.id) }}" method="POST" class="inline-form" data-confirm="¿Eliminar esta tarea? Esta acción no se puede deshacer desde el listado.">
-                            <button type="submit" class="btn btn-danger btn-sm">Eliminar</button>
-                        </form>
+                            <form action="{{ url_for('tasks.delete_task_route', task_id=task.id) }}" method="POST" class="inline-form" data-confirm="¿Eliminar esta tarea? Esta acción no se puede deshacer desde el listado.">
+                                <button type="submit" class="btn btn-danger btn-sm">Eliminar</button>
+                            </form>
+                        {% endif %}
                     </div>
                 </div>
             {% endfor %}

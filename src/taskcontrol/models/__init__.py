@@ -3,5 +3,6 @@ from src.taskcontrol.models.category import Category
 from src.taskcontrol.models.task import Task
 from src.taskcontrol.models.audit import AuditLog
 from src.taskcontrol.models.password_reset import PasswordResetToken
+from src.taskcontrol.models.notification import Notification
 
-__all__ = ["User", "Category", "Task", "AuditLog", "PasswordResetToken"]
+__all__ = ["User", "Category", "Task", "AuditLog", "PasswordResetToken", "Notification"]

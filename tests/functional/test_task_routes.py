@@ -457,3 +457,124 @@ def test_list_tasks_exposes_is_overdue(client):
     tasks = {t["title"]: t["is_overdue"] for t in resp.get_json()["data"]["tasks"]}
     assert tasks["Vencida"] is True
     assert tasks["Futura"] is False
+
+
+# --- US1 (Incremento 4): Asignación Segura de Tareas entre Usuarios (HU-10) ---
+
+def test_assign_task_success(client):
+    """Verifica asignación exitosa vía JSON."""
+    _login_as(client, "assignowner@example.com")
+    res = client.post(
+        "/tasks", data={"title": "Tarea a Asignar"}, headers={"Accept": "application/json"}
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    _login_as(client, "assignreceiver@example.com")
+    _login_as(client, "assignowner@example.com")  # vuelve a loguearse como creador
+
+    resp = client.post(
+        f"/tasks/{task_id}/assign",
+        data={"assigned_to_email": "assignreceiver@example.com"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["assigned_to"]["email"] == "assignreceiver@example.com"
+
+
+def test_assign_task_nonexistent_email_404(client):
+    """Verifica 404 ASSIGNEE_NOT_FOUND al asignar a un correo no registrado."""
+    _login_as(client, "assignowner2@example.com")
+    res = client.post(
+        "/tasks", data={"title": "Tarea"}, headers={"Accept": "application/json"}
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    resp = client.post(
+        f"/tasks/{task_id}/assign",
+        data={"assigned_to_email": "fantasma@example.com"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 404
+    assert resp.get_json()["code"] == "ASSIGNEE_NOT_FOUND"
+
+
+def test_assign_task_other_users_task_404(client):
+    """Verifica 404 al intentar asignar una tarea que no es propia."""
+    _login_as(client, "assignrealowner@example.com")
+    res = client.post(
+        "/tasks", data={"title": "Tarea Ajena"}, headers={"Accept": "application/json"}
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    _login_as(client, "assignintruder@example.com")
+    resp = client.post(
+        f"/tasks/{task_id}/assign",
+        data={"assigned_to_email": "assignintruder@example.com"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 404
+
+
+def test_assign_task_unauthenticated_fails(client):
+    """Verifica 401 Unauthorized sin sesión activa."""
+    resp = client.post(
+        "/tasks/1/assign",
+        data={"assigned_to_email": "x@example.com"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 401
+
+
+def test_unassign_task_success(client):
+    """Verifica desasignación exitosa vía JSON."""
+    _login_as(client, "unassignowner@example.com")
+    res = client.post(
+        "/tasks", data={"title": "Tarea a Desasignar"}, headers={"Accept": "application/json"}
+    )
+    task_id = res.get_json()["data"]["id"]
+    client.post(
+        f"/tasks/{task_id}/assign",
+        data={"assigned_to_email": "unassignowner@example.com"},
+        headers={"Accept": "application/json"},
+    )
+
+    resp = client.post(f"/tasks/{task_id}/unassign", headers={"Accept": "application/json"})
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["assigned_to"] is None
+
+
+def test_list_tasks_view_filter(client):
+    """Verifica que GET /tasks?view=created|assigned filtre correctamente."""
+    _login_as(client, "viewowner@example.com")
+    client.post("/tasks", data={"title": "Mia"}, headers={"Accept": "application/json"})
+
+    resp_created = client.get("/tasks?view=created", headers={"Accept": "application/json"})
+    assert resp_created.status_code == 200
+    assert resp_created.get_json()["data"]["count"] == 1
+
+    resp_assigned = client.get("/tasks?view=assigned", headers={"Accept": "application/json"})
+    assert resp_assigned.get_json()["data"]["count"] == 0
+
+
+def test_assignee_can_change_status_via_route(client):
+    """Verifica que el asignatario pueda cambiar el estado vía HTTP (hallazgo E1)."""
+    _login_as(client, "statusassignee@example.com")  # pre-registra al asignatario
+    _login_as(client, "statusowner@example.com")
+    res = client.post(
+        "/tasks", data={"title": "Tarea Delegada HTTP"}, headers={"Accept": "application/json"}
+    )
+    task_id = res.get_json()["data"]["id"]
+    assign_resp = client.post(
+        f"/tasks/{task_id}/assign",
+        data={"assigned_to_email": "statusassignee@example.com"},
+        headers={"Accept": "application/json"},
+    )
+    assert assign_resp.status_code == 200
+
+    _login_as(client, "statusassignee@example.com")
+    resp = client.post(
+        f"/tasks/{task_id}/status",
+        data={"status": "completed"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200

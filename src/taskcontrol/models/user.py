@@ -14,8 +14,15 @@ class User(db.Model):
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
-    # Relación 1 a N con Task
-    tasks = db.relationship("Task", backref="user", lazy=True, cascade="all, delete-orphan")
+    # Relación 1 a N con Task (como creador). foreign_keys explícito porque Task
+    # también tiene assigned_to_id apuntando a users.id (ver research.md Incremento 4 §4).
+    tasks = db.relationship(
+        "Task",
+        foreign_keys="Task.user_id",
+        backref="user",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
 
     def to_dict(self):
         return {

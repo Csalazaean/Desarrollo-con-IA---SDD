@@ -15,6 +15,12 @@
                     <span class="user-greeting">👤 {{ session.get('user_email', 'Usuario') }}</span>
                     <a href="{{ url_for('tasks.list_tasks') }}">Mis Tareas</a>
                     <a href="{{ url_for('categories.list_categories') }}">Categorías</a>
+                    <a href="{{ url_for('notifications.list_notifications') }}">
+                        🔔 Notificaciones
+                        {% if unread_notifications_count and unread_notifications_count > 0 %}
+                            <span class="badge badge-overdue" style="padding: 0.1rem 0.5rem;">{{ unread_notifications_count }}</span>
+                        {% endif %}
+                    </a>
                     <form action="{{ url_for('auth.logout') }}" method="POST" class="inline-form">
                         <button type="submit" class="btn btn-secondary btn-sm">Cerrar Sesión</button>
                     </form>

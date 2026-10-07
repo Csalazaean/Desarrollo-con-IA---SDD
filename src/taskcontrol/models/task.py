@@ -24,6 +24,9 @@ class Task(db.Model):
         nullable=True,
         index=True,
     )
+    assigned_to_id = db.Column(
+        db.Integer, db.ForeignKey("users.id"), nullable=True, index=True
+    )
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
@@ -37,6 +40,9 @@ class Task(db.Model):
     category = db.relationship(
         "Category", backref=db.backref("tasks", lazy="dynamic", passive_deletes=True)
     )
+    # foreign_keys explícito: Task ya tiene user_id (creador) apuntando a users.id;
+    # sin esto SQLAlchemy no puede resolver cuál FK usa esta relación (ver research.md §4)
+    assignee = db.relationship("User", foreign_keys=[assigned_to_id])
 
     @property
     def is_overdue(self) -> bool:
@@ -46,8 +52,8 @@ class Task(db.Model):
         current_date_utc = datetime.now(timezone.utc).date()
         return self.due_date < current_date_utc
 
-    def to_dict(self):
-        return {
+    def to_dict(self, current_user_id: int = None):
+        data = {
             "id": self.id,
             "user_id": self.user_id,
             "title": self.title,
@@ -65,4 +71,12 @@ class Task(db.Model):
             ),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "assigned_to": (
+                {"id": self.assignee.id, "email": self.assignee.email}
+                if self.assigned_to_id and self.assignee
+                else None
+            ),
         }
+        if current_user_id is not None:
+            data["is_owner"] = self.user_id == current_user_id
+        return data

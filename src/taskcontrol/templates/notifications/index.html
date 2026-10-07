@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Notificaciones - TaskControl{% endblock %}
+
+{% block content %}
+<div class="notifications-page">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h2>Mis Notificaciones {% if unread_count > 0 %}<span class="badge badge-overdue">{{ unread_count }} sin leer</span>{% endif %}</h2>
+        {% if unread_count > 0 %}
+            <form action="{{ url_for('notifications.mark_all_as_read_route') }}" method="POST">
+                <button type="submit" class="btn btn-secondary btn-sm">Marcar todas como leídas</button>
+            </form>
+        {% endif %}
+    </div>
+
+    <div class="tasks-list">
+        {% if notifications %}
+            {% for notification in notifications %}
+                <div class="task-card" style="{% if notification.is_read %}opacity: 0.6;{% endif %}">
+                    <div style="flex: 1;">
+                        <p style="margin-bottom: 0.25rem;">{{ notification.message }}</p>
+                        <span style="font-size: 0.85rem; color: var(--text-muted);">
+                            🕒 {{ notification.created_at.strftime('%Y-%m-%d %H:%M') if notification.created_at else '' }}
+                            {% if notification.is_read %} · Leída{% endif %}
+                        </span>
+                    </div>
+                    {% if not notification.is_read %}
+                        <form action="{{ url_for('notifications.mark_as_read_route', notification_id=notification.id) }}" method="POST" class="inline-form">
+                            <button type="submit" class="btn btn-secondary btn-sm">Marcar como leída</button>
+                        </form>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        {% else %}
+            <div style="text-align: center; padding: 3rem 1rem; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); color: var(--text-muted);">
+                <p style="font-size: 1.1rem;">No tienes notificaciones todavía.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

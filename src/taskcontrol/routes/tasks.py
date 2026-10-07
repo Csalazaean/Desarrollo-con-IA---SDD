@@ -18,6 +18,7 @@ from src.taskcontrol.services.task_service import (
     TaskAlreadyDeletedError,
     InvalidTaskStateTransitionError,
     InvalidPriorityError,
+    AssigneeNotFoundError,
 )
 from src.taskcontrol.services.category_service import CategoryNotFoundError, CategoryService
 
@@ -51,9 +52,10 @@ def list_tasks():
     status_filter = request.args.get("status")
     sort = request.args.get("sort")
     category_filter = request.args.get("category_id")
+    view = request.args.get("view", "all")
 
     tasks = TaskService.get_user_tasks(
-        user_id=user_id, status=status_filter, sort=sort, category_id=category_filter
+        user_id=user_id, status=status_filter, sort=sort, category_id=category_filter, view=view
     )
 
     if _is_json_request():
@@ -62,7 +64,7 @@ def list_tasks():
                 {
                     "status": "success",
                     "data": {
-                        "tasks": [t.to_dict() for t in tasks],
+                        "tasks": [t.to_dict(current_user_id=user_id) for t in tasks],
                         "count": len(tasks),
                         "filter": status_filter,
                     },
@@ -79,6 +81,8 @@ def list_tasks():
         current_status=status_filter,
         current_sort=sort,
         current_category=category_filter,
+        current_view=view,
+        current_user_id=user_id,
         categories=categories,
     )
 
@@ -260,6 +264,96 @@ def assign_category_route(task_id: int):
                 404,
             )
         flash("Categoría no encontrada.", "error")
+        return redirect(url_for("tasks.list_tasks")), 404
+
+
+@tasks_bp.route("/<int:task_id>/assign", methods=["POST"])
+@login_required
+def assign_task_route(task_id: int):
+    """Asignación de una tarea propia a otro usuario por correo (HU-10)."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or request.form
+    assigned_to_email = data.get("assigned_to_email", "")
+
+    if not assigned_to_email or not assigned_to_email.strip():
+        if _is_json_request():
+            return (
+                jsonify({"status": "error", "code": "VALIDATION_ERROR", "message": "Debe indicar un correo electrónico válido"}),
+                400,
+            )
+        flash("Debe indicar un correo electrónico válido.", "error")
+        return redirect(url_for("tasks.list_tasks")), 400
+
+    try:
+        task = TaskService.assign_task(
+            task_id=task_id, user_id=user_id, assigned_to_email=assigned_to_email
+        )
+
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Tarea asignada exitosamente",
+                        "data": task.to_dict(current_user_id=user_id),
+                    }
+                ),
+                200,
+            )
+
+        flash("Tarea asignada exitosamente.", "success")
+        return redirect(url_for("tasks.list_tasks"))
+
+    except TaskNotFoundError:
+        if _is_json_request():
+            return (
+                jsonify({"status": "error", "code": "TASK_NOT_FOUND", "message": "Tarea no encontrada"}),
+                404,
+            )
+        flash("Tarea no encontrada.", "error")
+        return redirect(url_for("tasks.list_tasks")), 404
+
+    except AssigneeNotFoundError as e:
+        if _is_json_request():
+            return (
+                jsonify({"status": "error", "code": "ASSIGNEE_NOT_FOUND", "message": str(e)}),
+                404,
+            )
+        flash(str(e), "error")
+        return redirect(url_for("tasks.list_tasks")), 404
+
+
+@tasks_bp.route("/<int:task_id>/unassign", methods=["POST"])
+@login_required
+def unassign_task_route(task_id: int):
+    """Retira la asignación de una tarea propia; nunca notifica (HU-10)."""
+    user_id = session["user_id"]
+
+    try:
+        task = TaskService.unassign_task(task_id=task_id, user_id=user_id)
+
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Asignación retirada exitosamente",
+                        "data": task.to_dict(current_user_id=user_id),
+                    }
+                ),
+                200,
+            )
+
+        flash("Asignación retirada exitosamente.", "success")
+        return redirect(url_for("tasks.list_tasks"))
+
+    except TaskNotFoundError:
+        if _is_json_request():
+            return (
+                jsonify({"status": "error", "code": "TASK_NOT_FOUND", "message": "Tarea no encontrada"}),
+                404,
+            )
+        flash("Tarea no encontrada.", "error")
         return redirect(url_for("tasks.list_tasks")), 404
 
 
