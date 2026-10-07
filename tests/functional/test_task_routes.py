@@ -578,3 +578,64 @@ def test_assignee_can_change_status_via_route(client):
         headers={"Accept": "application/json"},
     )
     assert resp.status_code == 200
+
+
+# --- US2 (Incremento 5): Reordenar Tareas Arrastrándolas (HU-16) ---
+
+def test_reorder_tasks_success(client):
+    """Verifica reordenamiento exitoso vía JSON."""
+    _login_as(client, "reorderuser@example.com")
+    ids = []
+    for title in ["Tarea A", "Tarea B", "Tarea C"]:
+        res = client.post("/tasks", data={"title": title}, headers={"Accept": "application/json"})
+        ids.append(res.get_json()["data"]["id"])
+
+    resp = client.post(
+        "/tasks/reorder",
+        json={"task_ids": [ids[2], ids[0], ids[1]]},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["updated_count"] == 3
+
+    listing = client.get("/tasks?sort=manual", headers={"Accept": "application/json"})
+    ordered_ids = [t["id"] for t in listing.get_json()["data"]["tasks"]]
+    assert ordered_ids == [ids[2], ids[0], ids[1]]
+
+
+def test_reorder_tasks_empty_payload_rejected(client):
+    """Verifica 400 VALIDATION_ERROR con un payload vacío o malformado."""
+    _login_as(client, "reorderempty@example.com")
+    resp = client.post(
+        "/tasks/reorder", json={"task_ids": []}, headers={"Accept": "application/json"}
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "VALIDATION_ERROR"
+
+
+def test_reorder_tasks_foreign_task_rejected_atomically(client):
+    """Verifica 404 y que ninguna tarea del lote cambie si alguna no pertenece al usuario."""
+    _login_as(client, "reorderowner@example.com")
+    res = client.post("/tasks", data={"title": "Propia"}, headers={"Accept": "application/json"})
+    own_id = res.get_json()["data"]["id"]
+
+    _login_as(client, "reorderintruder@example.com")
+    res2 = client.post("/tasks", data={"title": "Ajena"}, headers={"Accept": "application/json"})
+    foreign_id = res2.get_json()["data"]["id"]
+
+    _login_as(client, "reorderowner@example.com")
+    resp = client.post(
+        "/tasks/reorder",
+        json={"task_ids": [own_id, foreign_id]},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 404
+    assert resp.get_json()["code"] == "TASK_NOT_FOUND"
+
+
+def test_reorder_tasks_unauthenticated_fails(client):
+    """Verifica 401 Unauthorized sin sesión activa."""
+    resp = client.post(
+        "/tasks/reorder", json={"task_ids": [1]}, headers={"Accept": "application/json"}
+    )
+    assert resp.status_code == 401

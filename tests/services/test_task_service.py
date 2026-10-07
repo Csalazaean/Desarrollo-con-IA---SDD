@@ -636,3 +636,89 @@ def test_assignee_cannot_edit_delete_priority_category_or_reassign_task(app, tes
             TaskService.assign_task(
                 task_id=task.id, user_id=second_user_id, assigned_to_email=second_user.email
             )
+
+
+# --- US2 (Incremento 5): Reordenar Tareas Arrastrándolas (HU-16) ---
+
+def test_reorder_tasks_persists_new_order_for_all_affected_tasks(app, test_user_id):
+    """Verifica que reorder_tasks asigne manual_order secuencial según la posición enviada."""
+    with app.app_context():
+        t1 = TaskService.create_task(user_id=test_user_id, title="Tarea 1")
+        t2 = TaskService.create_task(user_id=test_user_id, title="Tarea 2")
+        t3 = TaskService.create_task(user_id=test_user_id, title="Tarea 3")
+
+        TaskService.reorder_tasks(user_id=test_user_id, task_ids=[t3.id, t1.id, t2.id])
+
+        assert t3.manual_order == 0
+        assert t1.manual_order == 1
+        assert t2.manual_order == 2
+
+
+def test_reorder_rejects_task_not_owned_or_assigned(app, test_user_id, second_user_id):
+    """Verifica que reordenar una tarea ajena (ni creada ni asignada) sea rechazado (BLOQUEANTE)."""
+    with app.app_context():
+        own_task = TaskService.create_task(user_id=test_user_id, title="Propia")
+        foreign_task = TaskService.create_task(user_id=second_user_id, title="Ajena")
+
+        with pytest.raises(TaskNotFoundError):
+            TaskService.reorder_tasks(
+                user_id=test_user_id, task_ids=[own_task.id, foreign_task.id]
+            )
+
+
+def test_reorder_is_atomic_all_or_nothing(app, test_user_id, second_user_id):
+    """Verifica que un task_id inválido en el lote no aplique ningún cambio parcial (BLOQUEANTE)."""
+    with app.app_context():
+        t1 = TaskService.create_task(user_id=test_user_id, title="Tarea 1")
+        t2 = TaskService.create_task(user_id=test_user_id, title="Tarea 2")
+        foreign_task = TaskService.create_task(user_id=second_user_id, title="Ajena")
+        original_order_t1, original_order_t2 = t1.manual_order, t2.manual_order
+
+        with pytest.raises(TaskNotFoundError):
+            TaskService.reorder_tasks(
+                user_id=test_user_id, task_ids=[t2.id, foreign_task.id, t1.id]
+            )
+
+        assert t1.manual_order == original_order_t1
+        assert t2.manual_order == original_order_t2
+
+
+def test_get_user_tasks_sort_manual_respects_persisted_order(app, test_user_id):
+    """Verifica que sort='manual' ordene por manual_order ascendente."""
+    with app.app_context():
+        t1 = TaskService.create_task(user_id=test_user_id, title="Tarea 1")
+        t2 = TaskService.create_task(user_id=test_user_id, title="Tarea 2")
+        t3 = TaskService.create_task(user_id=test_user_id, title="Tarea 3")
+
+        TaskService.reorder_tasks(user_id=test_user_id, task_ids=[t2.id, t3.id, t1.id])
+
+        tasks = TaskService.get_user_tasks(user_id=test_user_id, sort="manual")
+        assert [t.id for t in tasks] == [t2.id, t3.id, t1.id]
+
+
+def test_assignee_can_reorder_assigned_task(app, test_user_id, second_user_id):
+    """Verifica que el asignatario pueda reordenar una tarea asignada (no creada por él) (clarify Q3)."""
+    with app.app_context():
+        from src.taskcontrol.models.user import User
+
+        second_user = db.session.get(User, second_user_id)
+        task = TaskService.create_task(user_id=test_user_id, title="Delegada")
+        TaskService.assign_task(task_id=task.id, user_id=test_user_id, assigned_to_email=second_user.email)
+
+        # No debe lanzar: el asignatario reordena una tarea que no creó
+        TaskService.reorder_tasks(user_id=second_user_id, task_ids=[task.id])
+        assert task.manual_order == 0
+
+
+def test_backfill_manual_order_follows_created_at_per_user(app, test_user_id, second_user_id):
+    """Verifica que el backfill asigne manual_order secuencial por usuario según created_at descendente."""
+    with app.app_context():
+        older = TaskService.create_task(user_id=test_user_id, title="Más antigua")
+        newer = TaskService.create_task(user_id=test_user_id, title="Más reciente")
+        other_user_task = TaskService.create_task(user_id=second_user_id, title="De otro usuario")
+
+        TaskService.backfill_manual_order()
+
+        assert newer.manual_order == 0
+        assert older.manual_order == 1
+        assert other_user_task.manual_order == 0

@@ -27,6 +27,7 @@ class Task(db.Model):
     assigned_to_id = db.Column(
         db.Integer, db.ForeignKey("users.id"), nullable=True, index=True
     )
+    manual_order = db.Column(db.Integer, nullable=False, default=0, index=True)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

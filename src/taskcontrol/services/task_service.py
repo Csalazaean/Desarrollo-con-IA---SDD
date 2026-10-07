@@ -55,6 +55,23 @@ class TaskService:
     VALID_PRIORITIES = {"high", "medium", "low"}
 
     @classmethod
+    def backfill_manual_order(cls):
+        """Asigna manual_order secuencial por usuario siguiendo created_at descendente
+        (mismo orden que ya se lista por defecto), para tareas que aún no tienen uno
+        asignado explícitamente. Invocado desde la migración (Principio VI) y reutilizable
+        en pruebas (ver research.md §5)."""
+        user_ids = [row[0] for row in db.session.query(Task.user_id).distinct().all()]
+        for user_id in user_ids:
+            tasks = (
+                Task.query.filter_by(user_id=user_id)
+                .order_by(Task.created_at.desc())
+                .all()
+            )
+            for index, task in enumerate(tasks):
+                task.manual_order = index
+        db.session.commit()
+
+    @classmethod
     def create_task(
         cls,
         user_id: int,
@@ -133,6 +150,8 @@ class TaskService:
             )
         elif sort == "due_date":
             query = query.order_by(Task.due_date.is_(None), Task.due_date.asc())
+        elif sort == "manual":
+            query = query.order_by(Task.manual_order.asc())
         else:
             query = query.order_by(Task.created_at.desc())
 
@@ -281,6 +300,25 @@ class TaskService:
         db.session.commit()
 
         return task
+
+    @classmethod
+    def reorder_tasks(cls, user_id: int, task_ids: list) -> int:
+        """Persiste el nuevo orden visual completo tras arrastrar y soltar (HU-16).
+
+        Autoriza cada task_id como creador O asignatario (spec Clarifications Q3: reordenar
+        una tarea asignada es una preferencia de vista personal, no una edición de la tarea).
+        Si algún task_id no es válido, la operación completa se aborta sin persistir ningún
+        cambio parcial (ver plan.md §4)."""
+        tasks = [
+            cls._get_task_for_creator_or_assignee(user_id=user_id, task_id=task_id)
+            for task_id in task_ids
+        ]
+
+        for index, task in enumerate(tasks):
+            task.manual_order = index
+        db.session.commit()
+
+        return len(tasks)
 
     @classmethod
     def update_task_details(

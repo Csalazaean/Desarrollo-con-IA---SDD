@@ -157,6 +157,51 @@ def create_task_route():
         return redirect(url_for("tasks.list_tasks"))
 
 
+@tasks_bp.route("/reorder", methods=["POST"])
+@login_required
+def reorder_tasks_route():
+    """Persiste el nuevo orden visual tras arrastrar y soltar (HU-16)."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    task_ids = data.get("task_ids")
+
+    if not task_ids or not isinstance(task_ids, list):
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "code": "VALIDATION_ERROR",
+                    "message": "Debe proporcionar un arreglo de identificadores de tarea",
+                }
+            ),
+            400,
+        )
+
+    try:
+        updated_count = TaskService.reorder_tasks(user_id=user_id, task_ids=task_ids)
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "message": "Orden actualizado exitosamente",
+                    "data": {"updated_count": updated_count},
+                }
+            ),
+            200,
+        )
+    except TaskNotFoundError:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "code": "TASK_NOT_FOUND",
+                    "message": "Una o más tareas no existen o no te pertenecen",
+                }
+            ),
+            404,
+        )
+
+
 @tasks_bp.route("/<int:task_id>/priority", methods=["POST", "PATCH"])
 @login_required
 def update_priority_route(task_id: int):

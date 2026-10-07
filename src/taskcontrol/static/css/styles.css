@@ -159,6 +159,10 @@ body {
     align-items: flex-start;
 }
 
+.task-card[draggable="true"] { cursor: grab; }
+.task-card.dragging { opacity: 0.5; }
+.task-card.drag-over { border-top: 3px solid var(--primary); }
+
 .badge {
     display: inline-block;
     padding: 0.25rem 0.6rem;
