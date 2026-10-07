@@ -11,9 +11,9 @@
 
 **Purpose**: Sincronización del entorno, ampliación de constantes de auditoría y soporte base para nuevos eventos.
 
-- [ ] T001 Synchronize development environment and verify baseline test suite in `tests/` with `pytest`
-- [ ] T002 [P] Register new audit action constants (`TASK_DELETED`, `TASK_REOPENED`, `PASSWORD_RESET_REQUESTED`, `PASSWORD_RESET_COMPLETED`) in `src/taskcontrol/models/audit.py` per `specs/002-task-closure-recovery/data-model.md`
-- [ ] T003 [P] Extend `AuditService` in `src/taskcontrol/services/audit_service.py` supporting anonymous/system actor (defaulting to `actor_id=0` when actor is unauthenticated) and registering new audit action constants
+- [X] T001 Synchronize development environment and verify baseline test suite in `tests/` with `pytest`
+- [X] T002 [P] Register new audit action constants (`TASK_DELETED`, `TASK_REOPENED`, `PASSWORD_RESET_REQUESTED`, `PASSWORD_RESET_COMPLETED`) in `src/taskcontrol/models/audit.py` per `specs/002-task-closure-recovery/data-model.md`
+- [X] T003 [P] Extend `AuditService` in `src/taskcontrol/services/audit_service.py` supporting anonymous/system actor (defaulting to `actor_id=0` when actor is unauthenticated) and registering new audit action constants
 
 ---
 

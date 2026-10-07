@@ -16,14 +16,15 @@ class AuditService:
     """Servicio centralizado de auditoría y observabilidad estructurada."""
 
     @staticmethod
-    def log_event(actor_id: int, action: str, entity_id: int, details: dict = None):
+    def log_event(actor_id: int = 0, action: str = "", entity_id: int = 0, details: dict = None):
         """Registra una mutación en base de datos y emite log estructurado JSON."""
         now = datetime.now(timezone.utc)
         details_str = json.dumps(details) if details else None
+        effective_actor_id = actor_id if actor_id is not None else 0
 
         # 1. Persistencia relacional inmutable
         audit_entry = AuditLog(
-            actor_id=actor_id,
+            actor_id=effective_actor_id,
             action=action,
             entity_id=entity_id,
             timestamp=now,
@@ -35,7 +36,7 @@ class AuditService:
         # 2. Emisión a log estructurado JSON
         log_payload = {
             "timestamp": now.isoformat(),
-            "actor_id": actor_id,
+            "actor_id": effective_actor_id,
             "action": action,
             "entity_id": entity_id,
             "details": details or {},

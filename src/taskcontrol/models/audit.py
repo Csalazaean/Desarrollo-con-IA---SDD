@@ -2,6 +2,16 @@ from datetime import datetime, timezone
 from src.taskcontrol.extensions import db
 
 
+# Acciones de auditoría (Principio VIII)
+ACTION_TASK_CREATED = "TASK_CREATED"
+ACTION_TASK_UPDATED = "TASK_UPDATED"
+ACTION_STATUS_CHANGED = "STATUS_CHANGED"
+ACTION_TASK_DELETED = "TASK_DELETED"
+ACTION_TASK_REOPENED = "TASK_REOPENED"
+ACTION_PASSWORD_RESET_REQUESTED = "PASSWORD_RESET_REQUESTED"
+ACTION_PASSWORD_RESET_COMPLETED = "PASSWORD_RESET_COMPLETED"
+
+
 class AuditLog(db.Model):
     """Modelo inmutable para auditoría y observabilidad (Principio VIII)."""
 
