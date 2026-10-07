@@ -20,7 +20,11 @@
         <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;">Entrar</button>
     </form>
 
-    <p style="margin-top: 1.5rem; text-align: center; font-size: 0.9rem; color: var(--text-muted);">
+    <p style="margin-top: 1rem; text-align: center; font-size: 0.9rem;">
+        <a href="{{ url_for('auth.forgot_password') }}" style="color: var(--text-muted);">¿Olvidaste tu contraseña?</a>
+    </p>
+
+    <p style="margin-top: 0.5rem; text-align: center; font-size: 0.9rem; color: var(--text-muted);">
         ¿No tienes cuenta? <a href="{{ url_for('auth.register') }}" style="color: var(--primary); font-weight: 600;">Regístrate</a>
     </p>
 </div>

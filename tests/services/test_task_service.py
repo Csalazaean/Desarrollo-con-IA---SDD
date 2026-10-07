@@ -6,6 +6,8 @@ from src.taskcontrol.services.task_service import (
     TaskValidationError,
     TaskNotFoundError,
     InvalidStateTransitionError,
+    TaskAlreadyDeletedError,
+    InvalidTaskStateTransitionError,
 )
 from src.taskcontrol.models.audit import AuditLog
 
@@ -179,3 +181,112 @@ def test_update_task_unauthorized_user(app, test_user_id, second_user_id):
             TaskService.update_task_details(
                 user_id=second_user_id, task_id=task.id, title="Hack intento"
             )
+
+
+# --- US1 (Incremento 2): Eliminación Lógica de Tareas (HU-05) ---
+
+def test_soft_delete_task_marks_deleted_and_sets_timestamp(app, test_user_id):
+    """Verifica que delete_task marque is_deleted=True y registre deleted_at."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea a eliminar")
+        deleted = TaskService.delete_task(user_id=test_user_id, task_id=task.id)
+
+        assert deleted.is_deleted is True
+        assert deleted.deleted_at is not None
+
+
+def test_soft_delete_preserves_task_in_database_and_audit_history(app, test_user_id):
+    """Verifica que la tarea siga existiendo en la tabla y que se registre el evento TASK_DELETED."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea con historial")
+        TaskService.delete_task(user_id=test_user_id, task_id=task.id)
+
+        from src.taskcontrol.extensions import db
+        from src.taskcontrol.models.task import Task
+
+        persisted = db.session.get(Task, task.id)
+        assert persisted is not None
+        assert persisted.is_deleted is True
+
+        audit = AuditLog.query.filter_by(action="TASK_DELETED", entity_id=task.id).first()
+        assert audit is not None
+        assert audit.actor_id == test_user_id
+
+
+def test_deleted_task_excluded_from_default_listing(app, test_user_id):
+    """Verifica que una tarea eliminada no aparezca en el listado por defecto."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Visible")
+        to_delete = TaskService.create_task(user_id=test_user_id, title="Tarea Oculta")
+        TaskService.delete_task(user_id=test_user_id, task_id=to_delete.id)
+
+        tasks = TaskService.get_user_tasks(user_id=test_user_id)
+        titles = [t.title for t in tasks]
+        assert "Tarea Visible" in titles
+        assert "Tarea Oculta" not in titles
+
+
+def test_cannot_delete_already_deleted_task(app, test_user_id):
+    """Verifica que no se permita eliminar dos veces la misma tarea."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Doble Borrado")
+        TaskService.delete_task(user_id=test_user_id, task_id=task.id)
+
+        with pytest.raises(TaskAlreadyDeletedError):
+            TaskService.delete_task(user_id=test_user_id, task_id=task.id)
+
+
+def test_cannot_edit_deleted_task(app, test_user_id):
+    """Verifica que una tarea eliminada no pueda editarse."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea a Proteger")
+        TaskService.delete_task(user_id=test_user_id, task_id=task.id)
+
+        with pytest.raises(TaskNotFoundError):
+            TaskService.update_task_details(
+                user_id=test_user_id, task_id=task.id, title="Intento de edición"
+            )
+
+
+# --- US2 (Incremento 2): Reapertura de Tareas Completadas (HU-06) ---
+
+def test_reopen_completed_task_success(app, test_user_id):
+    """Verifica que una tarea completada vuelva al estado pending al reabrirla."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea a Reabrir")
+        TaskService.update_task_status(
+            user_id=test_user_id, task_id=task.id, new_status="completed"
+        )
+
+        reopened = TaskService.reopen_task(user_id=test_user_id, task_id=task.id)
+        assert reopened.status == "pending"
+
+
+def test_reopen_task_generates_specific_task_reopened_audit_log(app, test_user_id):
+    """Verifica que la reapertura registre el evento TASK_REOPENED (distinto de STATUS_CHANGED)."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Auditada")
+        TaskService.update_task_status(
+            user_id=test_user_id, task_id=task.id, new_status="completed"
+        )
+        TaskService.reopen_task(user_id=test_user_id, task_id=task.id)
+
+        audit = AuditLog.query.filter_by(action="TASK_REOPENED", entity_id=task.id).first()
+        assert audit is not None
+        assert audit.actor_id == test_user_id
+
+
+def test_cannot_reopen_non_completed_or_deleted_task(app, test_user_id):
+    """Verifica que no se pueda reabrir una tarea pendiente, en progreso o eliminada."""
+    with app.app_context():
+        pending_task = TaskService.create_task(user_id=test_user_id, title="Tarea Pendiente")
+        with pytest.raises(InvalidTaskStateTransitionError):
+            TaskService.reopen_task(user_id=test_user_id, task_id=pending_task.id)
+
+        deleted_task = TaskService.create_task(user_id=test_user_id, title="Tarea Eliminada")
+        TaskService.update_task_status(
+            user_id=test_user_id, task_id=deleted_task.id, new_status="completed"
+        )
+        TaskService.delete_task(user_id=test_user_id, task_id=deleted_task.id)
+        with pytest.raises(TaskNotFoundError):
+            TaskService.reopen_task(user_id=test_user_id, task_id=deleted_task.id)

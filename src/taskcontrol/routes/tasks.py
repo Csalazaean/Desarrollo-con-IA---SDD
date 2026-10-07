@@ -15,6 +15,8 @@ from src.taskcontrol.services.task_service import (
     TaskValidationError,
     TaskNotFoundError,
     InvalidStateTransitionError,
+    TaskAlreadyDeletedError,
+    InvalidTaskStateTransitionError,
 )
 
 tasks_bp = Blueprint("tasks", __name__)
@@ -250,3 +252,126 @@ def edit_task_route(task_id: int):
             )
         flash(str(e), "error")
         return render_template("tasks/edit.html", task=task), 400
+
+
+@tasks_bp.route("/<int:task_id>/delete", methods=["POST", "DELETE"])
+@login_required
+def delete_task_route(task_id: int):
+    """Eliminación lógica (soft delete) de una tarea propia (HU-05)."""
+    user_id = session["user_id"]
+
+    try:
+        task = TaskService.delete_task(user_id=user_id, task_id=task_id)
+
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Tarea eliminada exitosamente",
+                        "data": {
+                            "task_id": task.id,
+                            "is_deleted": task.is_deleted,
+                            "deleted_at": task.deleted_at.isoformat()
+                            if task.deleted_at
+                            else None,
+                        },
+                    }
+                ),
+                200,
+            )
+
+        flash("Tarea eliminada exitosamente.", "success")
+        return redirect(url_for("tasks.list_tasks"))
+
+    except TaskNotFoundError:
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "TASK_NOT_FOUND",
+                        "message": "Tarea no encontrada",
+                    }
+                ),
+                404,
+            )
+        flash("Tarea no encontrada.", "error")
+        return redirect(url_for("tasks.list_tasks")), 404
+
+    except TaskAlreadyDeletedError as e:
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "TASK_ALREADY_DELETED",
+                        "message": str(e),
+                    }
+                ),
+                409,
+            )
+        flash(str(e), "error")
+        return redirect(url_for("tasks.list_tasks")), 409
+
+
+@tasks_bp.route("/<int:task_id>/reopen", methods=["POST"])
+@login_required
+def reopen_task_route(task_id: int):
+    """Reapertura de una tarea completada, devolviéndola a 'pending' (HU-06)."""
+    user_id = session["user_id"]
+
+    try:
+        task = TaskService.reopen_task(user_id=user_id, task_id=task_id)
+
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Tarea reabierta exitosamente",
+                        "data": {
+                            "task_id": task.id,
+                            "status": task.status,
+                            "previous_status": "completed",
+                            "updated_at": task.updated_at.isoformat()
+                            if task.updated_at
+                            else None,
+                        },
+                    }
+                ),
+                200,
+            )
+
+        flash("Tarea reabierta exitosamente.", "success")
+        return redirect(url_for("tasks.list_tasks"))
+
+    except TaskNotFoundError:
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "TASK_NOT_FOUND",
+                        "message": "Tarea no encontrada",
+                    }
+                ),
+                404,
+            )
+        flash("Tarea no encontrada.", "error")
+        return redirect(url_for("tasks.list_tasks")), 404
+
+    except InvalidTaskStateTransitionError as e:
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "INVALID_STATE_FOR_REOPEN",
+                        "message": str(e),
+                    }
+                ),
+                400,
+            )
+        flash(str(e), "error")
+        return redirect(url_for("tasks.list_tasks")), 400

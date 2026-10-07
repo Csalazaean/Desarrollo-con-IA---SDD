@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from src.taskcontrol.extensions import db
 from src.taskcontrol.models.task import Task
 from src.taskcontrol.services.audit_service import AuditService
@@ -16,6 +16,16 @@ class TaskNotFoundError(Exception):
 
 class InvalidStateTransitionError(Exception):
     """Transición de estado no permitida por la máquina de estados."""
+    pass
+
+
+class TaskAlreadyDeletedError(Exception):
+    """La tarea ya se encuentra eliminada lógicamente."""
+    pass
+
+
+class InvalidTaskStateTransitionError(Exception):
+    """Transición no permitida en el ciclo de cierre/reapertura de tareas (Incremento 2)."""
     pass
 
 
@@ -67,16 +77,18 @@ class TaskService:
 
     @classmethod
     def get_user_tasks(cls, user_id: int, status: str = None):
-        """Lista las tareas del usuario autenticado con filtrado opcional."""
-        query = Task.query.filter_by(user_id=user_id)
+        """Lista las tareas activas (no eliminadas) del usuario autenticado con filtrado opcional."""
+        query = Task.query.filter_by(user_id=user_id, is_deleted=False)
         if status in {"pending", "in_progress", "completed"}:
             query = query.filter_by(status=status)
         return query.order_by(Task.created_at.desc()).all()
 
     @classmethod
     def get_task_by_id(cls, user_id: int, task_id: int) -> Task:
-        """Obtiene una tarea verificando la propiedad del usuario autenticado."""
-        task = Task.query.filter_by(id=task_id, user_id=user_id).first()
+        """Obtiene una tarea activa verificando la propiedad del usuario autenticado."""
+        task = Task.query.filter_by(
+            id=task_id, user_id=user_id, is_deleted=False
+        ).first()
         if not task:
             raise TaskNotFoundError("Tarea no encontrada")
         return task
@@ -136,6 +148,56 @@ class TaskService:
             action="TASK_UPDATED",
             entity_id=task.id,
             details={"title": clean_title},
+        )
+        db.session.commit()
+
+        return task
+
+    @classmethod
+    def delete_task(cls, user_id: int, task_id: int) -> Task:
+        """Elimina lógicamente (soft delete) una tarea propia, preservando su historial."""
+        task = Task.query.filter_by(id=task_id, user_id=user_id).first()
+        if not task:
+            raise TaskNotFoundError("Tarea no encontrada")
+
+        if task.is_deleted:
+            raise TaskAlreadyDeletedError("La tarea ya fue eliminada previamente")
+
+        task.is_deleted = True
+        task.deleted_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        # Auditoría obligatoria (Principio VIII)
+        AuditService.log_event(
+            actor_id=user_id,
+            action="TASK_DELETED",
+            entity_id=task.id,
+            details={"title": task.title},
+        )
+        db.session.commit()
+
+        return task
+
+    @classmethod
+    def reopen_task(cls, user_id: int, task_id: int) -> Task:
+        """Reabre una tarea completada, devolviéndola al estado 'pending' (HU-06)."""
+        task = cls.get_task_by_id(user_id=user_id, task_id=task_id)
+
+        if task.status != "completed":
+            raise InvalidTaskStateTransitionError(
+                "Solo se pueden reabrir tareas que se encuentren en estado 'completada'"
+            )
+
+        previous_status = task.status
+        task.status = "pending"
+        db.session.commit()
+
+        # Auditoría obligatoria (Principio VIII) con evento diferenciado de STATUS_CHANGED
+        AuditService.log_event(
+            actor_id=user_id,
+            action="TASK_REOPENED",
+            entity_id=task.id,
+            details={"previous_status": previous_status, "current_status": "pending"},
         )
         db.session.commit()
 
