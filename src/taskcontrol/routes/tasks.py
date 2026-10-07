@@ -429,6 +429,48 @@ def reopen_task_route(task_id: int):
         return redirect(url_for("tasks.list_tasks")), 400
 
 
+@tasks_bp.route("/reorder", methods=["POST"])
+@login_required
+def reorder_tasks_route():
+    """Persiste el orden personal del listado tras arrastrar y soltar (HU-16)."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or request.form
+    task_ids = data.get("task_ids")
+
+    def _invalido():
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "code": "INVALID_TASK_ORDER",
+                    "message": "Debe enviar una lista de identificadores de tarea",
+                }
+            ),
+            400,
+        )
+
+    if task_ids is None or not isinstance(task_ids, list):
+        return _invalido()
+
+    try:
+        ids_limpios = [int(i) for i in task_ids]
+    except (TypeError, ValueError):
+        return _invalido()
+
+    resultado = TaskService.reorder_user_tasks(user_id=user_id, task_ids=ids_limpios)
+
+    return (
+        jsonify(
+            {
+                "status": "success",
+                "message": "Orden actualizado exitosamente",
+                "data": resultado,
+            }
+        ),
+        200,
+    )
+
+
 @tasks_bp.route("/<int:task_id>/assign", methods=["POST"])
 @login_required
 def assign_task_route(task_id: int):

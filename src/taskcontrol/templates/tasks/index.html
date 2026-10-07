@@ -79,14 +79,20 @@
         <a href="{{ url_for('tasks.list_tasks', status=current_status, category_id=current_category, sort='due_date') }}" class="filter-btn {% if current_sort == 'due_date' %}active{% endif %}">Fecha límite</a>
     </div>
 
-    <!-- Listado de Tareas (HU-02) -->
-    <div class="tasks-list">
+    <!-- Listado de Tareas (HU-02).
+         El reordenamiento manual solo se ofrece cuando no hay un ordenamiento
+         explícito activo: con uno aplicado, el orden arrastrado se desharía en la
+         siguiente recarga (FR-012). -->
+    <div class="tasks-list" {% if not current_sort %}data-reorderable="true"{% endif %}>
         {% if tasks %}
             {% for task in tasks %}
-                <div class="task-card">
+                {# data-task-id y data-status-badge los usa main.js para localizar la
+                   tarjeta y su distintivo. Sin JavaScript son atributos inertes y la
+                   página sigue funcionando igual (FR-005). #}
+                <div class="task-card" data-task-id="{{ task.id }}">
                     <div style="flex: 1;">
                         <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
-                            <span class="badge badge-{{ task.status }}">
+                            <span class="badge badge-{{ task.status }}" data-status-badge>
                                 {% if task.status == 'pending' %}Pendiente
                                 {% elif task.status == 'in_progress' %}En Progreso
                                 {% elif task.status == 'completed' %}Completada

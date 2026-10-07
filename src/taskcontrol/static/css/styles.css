@@ -187,6 +187,20 @@ body {
 .badge-mine { background-color: #e0f2fe; color: #075985; }
 .badge-assigned-to-me { background-color: #fef9c3; color: #854d0e; }
 
+/* Arrastrar y soltar para reordenar (HU-16). */
+.tasks-list[data-reorderable="true"] .task-card {
+    cursor: grab;
+}
+
+.tasks-list[data-reorderable="true"] .task-card.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+
+.tasks-list[data-reorderable="true"] .task-card.drag-over {
+    border-top: 2px solid var(--primary);
+}
+
 /* Contador de notificaciones sin leer (HU-11). */
 .notification-badge {
     display: inline-block;
