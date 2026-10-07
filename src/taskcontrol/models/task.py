@@ -43,6 +43,10 @@ class Task(db.Model):
     priority = db.Column(
         db.String(20), nullable=False, default=DEFAULT_PRIORITY, index=True
     )
+    # Orden personal del listado (HU-16). Entero ascendente: a menor valor, más
+    # arriba. Es por usuario, no global: las posiciones solo se comparan entre
+    # tareas del mismo propietario.
+    position = db.Column(db.Integer, nullable=False, default=0, index=True)
     is_deleted = db.Column(db.Boolean, default=False, nullable=False, index=True)
     deleted_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(
@@ -104,6 +108,7 @@ class Task(db.Model):
             "assigned_to_id": self.assigned_to_id,
             "assignee_email": self.assignee_email,
             "creator_email": self.creator_email,
+            "position": self.position,
             "is_deleted": self.is_deleted,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,

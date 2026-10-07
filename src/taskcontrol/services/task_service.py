@@ -149,7 +149,47 @@ class TaskService:
         if sort == "due_date":
             return query.order_by(Task.due_date.is_(None), Task.due_date.asc()).all()
 
-        return query.order_by(Task.created_at.desc()).all()
+        # Orden por defecto: el orden personal del usuario (HU-16). El desempate por
+        # created_at descendente mantiene el comportamiento anterior en las tareas
+        # que aún comparten la posición 0, es decir, todas hasta que se arrastre una.
+        return query.order_by(Task.position.asc(), Task.created_at.desc()).all()
+
+    @classmethod
+    def reorder_user_tasks(cls, user_id: int, task_ids: list) -> dict:
+        """Persiste el orden personal del listado del usuario (HU-16).
+
+        Los identificadores recibidos se filtran contra las tareas vigentes del
+        usuario **antes** de escribir nada: una petición manipulada con tareas
+        ajenas no altera ninguna de ellas, solo las reporta como ignoradas
+        (FR-010, Principio VII).
+
+        Los identificadores inexistentes o de tareas eliminadas se descartan en
+        lugar de hacer fallar toda la operación.
+        """
+        ids_solicitados = [int(i) for i in task_ids]
+
+        propias = {
+            tarea.id: tarea
+            for tarea in Task.query.filter(
+                Task.user_id == user_id,
+                Task.is_deleted.is_(False),
+                Task.id.in_(ids_solicitados) if ids_solicitados else False,
+            ).all()
+        }
+
+        posicion = 0
+        ignorados = []
+        for task_id in ids_solicitados:
+            tarea = propias.get(task_id)
+            if tarea is None:
+                ignorados.append(task_id)
+                continue
+            tarea.position = posicion
+            posicion += 1
+
+        db.session.commit()
+
+        return {"reordered_count": posicion, "ignored_ids": ignorados}
 
     @classmethod
     def get_task_by_id(cls, user_id: int, task_id: int, include_deleted: bool = False) -> Task:
