@@ -81,9 +81,47 @@ Crea una nueva categoría para el usuario autenticado.
 
 ---
 
-## 3. Eliminación de Categoría (Desvinculación sin Cascada)
+## 3. Edición de Categoría
 
-### 3.1. `POST /categories/<int:category_id>/delete` (o `DELETE /categories/<int:category_id>`)
+### 3.1. `POST /categories/<int:category_id>/edit`
+Actualiza el nombre y los metadatos de una categoría propia. Exigido por FR-007 ("listar, **editar** y eliminar sus propias categorías") y por la acción de auditoría `CATEGORY_UPDATED` de `data-model.md` §2.3.
+
+- **Método**: `POST`
+- **Ruta**: `/categories/<int:category_id>/edit`
+- **Autenticación**: **Obligatoria**.
+- **Payload de Entrada**:
+  ```json
+  {
+    "name": "Universidad 2026",
+    "description": "Entregas del semestre",
+    "color": "#F59E0B"
+  }
+  ```
+
+#### Respuestas:
+- **`200 OK` / `302 Found` (Éxito)**:
+  ```json
+  {
+    "status": "success",
+    "message": "Categoría actualizada exitosamente",
+    "data": {
+      "id": 2,
+      "name": "Universidad 2026",
+      "color": "#F59E0B"
+    }
+  }
+  ```
+- **`400 Bad Request`**: Nombre vacío, mayor a 50 caracteres, o duplicado respecto de otra categoría del mismo usuario (`DUPLICATE_CATEGORY_NAME` / `INVALID_CATEGORY_NAME`).
+- **`404 Not Found`**: La categoría no existe o pertenece a otro usuario.
+- **`401 Unauthorized`**: Sin sesión activa.
+
+> **Unicidad sin distinguir mayúsculas**: la verificación de duplicados compara en minúsculas. La `UniqueConstraint(user_id, name)` de SQLite distingue mayúsculas y por sí sola dejaría convivir "Trabajo" y "trabajo", lo que contradice los Edge Cases de `spec.md`.
+
+---
+
+## 4. Eliminación de Categoría (Desvinculación sin Cascada)
+
+### 4.1. `POST /categories/<int:category_id>/delete` (o `DELETE /categories/<int:category_id>`)
 Elimina la categoría del usuario y desvincula automáticamente todas las tareas asociadas (`category_id = NULL`), sin borrar ninguna tarea.
 
 - **Método**: `POST` / `DELETE`

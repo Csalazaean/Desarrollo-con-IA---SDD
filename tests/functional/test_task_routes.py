@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timedelta, timezone
 
 
 def _login_as(client, email="user@example.com", password="Password123!"):
@@ -380,3 +381,137 @@ def test_rendered_reopen_form_action_accepts_post(client):
     respuesta = client.post(accion.group(1))
     assert respuesta.status_code != 405
     assert respuesta.status_code in (200, 302)
+
+
+# ===========================================================================
+# Incremento 3 — HU-07 prioridad, HU-08 categoría y HU-09 vencidas
+# ===========================================================================
+
+
+def test_update_priority_endpoint_success(client):
+    """POST /tasks/<id>/priority actualiza la prioridad según contrato."""
+    _login_as(client, "prioroute@example.com")
+    task_id = client.post(
+        "/tasks", data={"title": "Cambiar prioridad"}, headers={"Accept": "application/json"}
+    ).get_json()["data"]["id"]
+
+    res = client.post(
+        f"/tasks/{task_id}/priority",
+        data={"priority": "high"},
+        headers={"Accept": "application/json"},
+    )
+    assert res.status_code == 200
+    assert res.get_json()["data"]["priority"] == "high"
+
+
+def test_update_priority_endpoint_invalid_value(client):
+    """Un valor de prioridad inválido responde 400 (Edge Case)."""
+    _login_as(client, "prioinvalid@example.com")
+    task_id = client.post(
+        "/tasks", data={"title": "Prioridad manipulada"}, headers={"Accept": "application/json"}
+    ).get_json()["data"]["id"]
+
+    res = client.post(
+        f"/tasks/{task_id}/priority",
+        data={"priority": "altísima"},
+        headers={"Accept": "application/json"},
+    )
+    assert res.status_code == 400
+
+
+def test_update_priority_endpoint_not_found_for_other_user(client):
+    """No se puede cambiar la prioridad de una tarea ajena (Principio VII)."""
+    _login_as(client, "prioowner@example.com")
+    task_id = client.post(
+        "/tasks", data={"title": "Tarea propia"}, headers={"Accept": "application/json"}
+    ).get_json()["data"]["id"]
+
+    _login_as(client, "priointruder@example.com")
+    res = client.post(
+        f"/tasks/{task_id}/priority",
+        data={"priority": "high"},
+        headers={"Accept": "application/json"},
+    )
+    assert res.status_code == 404
+
+
+def test_list_tasks_sort_by_priority(client):
+    """El listado respeta el orden jerárquico alta → media → baja (FR-004)."""
+    _login_as(client, "priosort@example.com")
+    for titulo, prioridad in (("Baja", "low"), ("Alta", "high"), ("Media", "medium")):
+        client.post(
+            "/tasks",
+            data={"title": titulo, "priority": prioridad},
+            headers={"Accept": "application/json"},
+        )
+
+    res = client.get("/tasks?sort=priority_desc", headers={"Accept": "application/json"})
+    assert res.status_code == 200
+    prioridades = [t["priority"] for t in res.get_json()["data"]["tasks"]]
+    assert prioridades == ["high", "medium", "low"]
+
+
+def test_list_tasks_filter_by_category(client):
+    """El listado se puede filtrar por categoría y por 'sin categoría' (FR-008)."""
+    _login_as(client, "catfilter@example.com")
+    categoria_id = client.post(
+        "/categories", data={"name": "Trabajo"}, headers={"Accept": "application/json"}
+    ).get_json()["data"]["id"]
+
+    con_categoria = client.post(
+        "/tasks", data={"title": "Con categoría"}, headers={"Accept": "application/json"}
+    ).get_json()["data"]["id"]
+    client.post(
+        f"/tasks/{con_categoria}/category",
+        data={"category_id": categoria_id},
+        headers={"Accept": "application/json"},
+    )
+    client.post("/tasks", data={"title": "Sin categoría"}, headers={"Accept": "application/json"})
+
+    filtradas = client.get(
+        f"/tasks?category_id={categoria_id}", headers={"Accept": "application/json"}
+    ).get_json()["data"]["tasks"]
+    assert len(filtradas) == 1
+    assert filtradas[0]["title"] == "Con categoría"
+
+    sin_categoria = client.get(
+        "/tasks?category_id=none", headers={"Accept": "application/json"}
+    ).get_json()["data"]["tasks"]
+    assert len(sin_categoria) == 1
+    assert sin_categoria[0]["title"] == "Sin categoría"
+
+
+def test_list_tasks_includes_is_overdue_flag(client):
+    """El backend entrega `is_overdue` ya calculado en el contrato (FR-014)."""
+    _login_as(client, "overdueroute@example.com")
+    ayer = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    manana = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+
+    client.post("/tasks", data={"title": "Vencida", "due_date": ayer}, headers={"Accept": "application/json"})
+    client.post("/tasks", data={"title": "A tiempo", "due_date": manana}, headers={"Accept": "application/json"})
+
+    tareas = client.get("/tasks", headers={"Accept": "application/json"}).get_json()["data"]["tasks"]
+    por_titulo = {t["title"]: t for t in tareas}
+
+    assert por_titulo["Vencida"]["is_overdue"] is True
+    assert por_titulo["A tiempo"]["is_overdue"] is False
+
+
+def test_assign_category_of_another_user_returns_404(client):
+    """Asociar una tarea propia a una categoría ajena responde 404 (FR-010, IDOR)."""
+    _login_as(client, "idorowner@example.com")
+    categoria_ajena = client.post(
+        "/categories", data={"name": "De otro"}, headers={"Accept": "application/json"}
+    ).get_json()["data"]["id"]
+
+    _login_as(client, "idorother@example.com")
+    task_id = client.post(
+        "/tasks", data={"title": "Mi tarea"}, headers={"Accept": "application/json"}
+    ).get_json()["data"]["id"]
+
+    res = client.post(
+        f"/tasks/{task_id}/category",
+        data={"category_id": categoria_ajena},
+        headers={"Accept": "application/json"},
+    )
+    assert res.status_code == 404

@@ -1,5 +1,7 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 import pytest
+from src.taskcontrol.models.audit import AuditLog
+from src.taskcontrol.models.task import Task
 from src.taskcontrol.services.user_service import UserService
 from src.taskcontrol.services.task_service import (
     TaskService,
@@ -325,3 +327,168 @@ def test_cannot_reopen_deleted_task(app, test_user_id):
 
         with pytest.raises((TaskNotFoundError, TaskAlreadyDeletedError, InvalidStateTransitionError)):
             TaskService.reopen_task(task_id=task.id, user_id=test_user_id)
+
+
+# ===========================================================================
+# Incremento 3 — HU-07: Prioridad de tareas
+# ===========================================================================
+
+
+def _nuevo_usuario(email):
+    return UserService.register_user(email, "Password123!")
+
+
+def test_task_created_with_default_medium_priority(app):
+    """Toda tarea nace con prioridad media si no se indica otra (FR-002, SC-001)."""
+    with app.app_context():
+        user = _nuevo_usuario("prio1@example.com")
+        tarea = TaskService.create_task(user_id=user.id, title="Sin prioridad explícita")
+        assert tarea.priority == Task.PRIORITY_MEDIUM
+
+
+def test_task_created_with_explicit_priority(app):
+    """Se puede fijar la prioridad al crear la tarea (FR-001)."""
+    with app.app_context():
+        user = _nuevo_usuario("prio2@example.com")
+        tarea = TaskService.create_task(
+            user_id=user.id, title="Urgente", priority=Task.PRIORITY_HIGH
+        )
+        assert tarea.priority == Task.PRIORITY_HIGH
+
+
+def test_update_task_priority_success(app):
+    """La prioridad se puede cambiar en cualquier momento y queda auditada (FR-003)."""
+    with app.app_context():
+        user = _nuevo_usuario("prio3@example.com")
+        tarea = TaskService.create_task(user_id=user.id, title="Cambiará de prioridad")
+
+        TaskService.update_task_priority(
+            task_id=tarea.id, user_id=user.id, priority=Task.PRIORITY_LOW
+        )
+        assert tarea.priority == Task.PRIORITY_LOW
+
+        assert AuditLog.query.filter_by(action="TASK_UPDATED", entity_id=tarea.id).count() >= 1
+
+
+def test_update_priority_rejects_invalid_value(app):
+    """Un valor fuera de alta/media/baja se rechaza (FR-001, Edge Case)."""
+    with app.app_context():
+        user = _nuevo_usuario("prio4@example.com")
+        tarea = TaskService.create_task(user_id=user.id, title="Prioridad manipulada")
+
+        with pytest.raises(TaskValidationError):
+            TaskService.update_task_priority(
+                task_id=tarea.id, user_id=user.id, priority="urgentísima"
+            )
+
+        assert tarea.priority == Task.PRIORITY_MEDIUM
+
+
+def test_cannot_update_priority_of_deleted_task(app):
+    """Una tarea eliminada no admite cambios de prioridad (FR-003)."""
+    with app.app_context():
+        user = _nuevo_usuario("prio5@example.com")
+        tarea = TaskService.create_task(user_id=user.id, title="Será borrada")
+        TaskService.delete_task(task_id=tarea.id, user_id=user.id)
+
+        with pytest.raises(TaskNotFoundError):
+            TaskService.update_task_priority(
+                task_id=tarea.id, user_id=user.id, priority=Task.PRIORITY_HIGH
+            )
+
+
+def test_list_tasks_sorted_by_priority_desc(app):
+    """El orden descendente es alta → media → baja, no alfabético (FR-004)."""
+    with app.app_context():
+        user = _nuevo_usuario("prio6@example.com")
+        TaskService.create_task(user_id=user.id, title="Baja", priority=Task.PRIORITY_LOW)
+        TaskService.create_task(user_id=user.id, title="Alta", priority=Task.PRIORITY_HIGH)
+        TaskService.create_task(user_id=user.id, title="Media", priority=Task.PRIORITY_MEDIUM)
+
+        orden = [t.priority for t in TaskService.get_user_tasks(user.id, sort="priority_desc")]
+        assert orden == [Task.PRIORITY_HIGH, Task.PRIORITY_MEDIUM, Task.PRIORITY_LOW]
+
+
+def test_list_tasks_sorted_by_priority_asc(app):
+    """El orden ascendente invierte la jerarquía (FR-004)."""
+    with app.app_context():
+        user = _nuevo_usuario("prio7@example.com")
+        TaskService.create_task(user_id=user.id, title="Alta", priority=Task.PRIORITY_HIGH)
+        TaskService.create_task(user_id=user.id, title="Baja", priority=Task.PRIORITY_LOW)
+        TaskService.create_task(user_id=user.id, title="Media", priority=Task.PRIORITY_MEDIUM)
+
+        orden = [t.priority for t in TaskService.get_user_tasks(user.id, sort="priority_asc")]
+        assert orden == [Task.PRIORITY_LOW, Task.PRIORITY_MEDIUM, Task.PRIORITY_HIGH]
+
+
+def test_priority_sort_preserves_status_filter(app):
+    """Filtrar por estado y ordenar por prioridad se combinan sin pisarse (FR-004, SC-002)."""
+    with app.app_context():
+        user = _nuevo_usuario("prio8@example.com")
+        en_curso = TaskService.create_task(user_id=user.id, title="En curso alta", priority=Task.PRIORITY_HIGH)
+        TaskService.update_task_status(user_id=user.id, task_id=en_curso.id, new_status="in_progress")
+        TaskService.create_task(user_id=user.id, title="Pendiente alta", priority=Task.PRIORITY_HIGH)
+
+        resultado = TaskService.get_user_tasks(user.id, status="in_progress", sort="priority_desc")
+        assert len(resultado) == 1
+        assert resultado[0].id == en_curso.id
+
+
+# ===========================================================================
+# Incremento 3 — HU-09: Indicación de tareas vencidas
+# ===========================================================================
+
+
+def test_task_with_past_due_date_is_overdue(app):
+    """Una tarea activa con fecha límite pasada está vencida (FR-012)."""
+    with app.app_context():
+        user = _nuevo_usuario("venc1@example.com")
+        tarea = TaskService.create_task(
+            user_id=user.id, title="Vencida", due_date=date.today() - timedelta(days=1)
+        )
+        assert tarea.is_overdue is True
+
+
+def test_task_due_today_is_not_overdue(app):
+    """Una tarea cuyo plazo es hoy todavía no está vencida (Edge Case).
+
+    La referencia es la fecha **UTC**, no la local: FR-011 lo exige para que la
+    misma tarea no aparezca vencida o no según la zona horaria de quien la mire.
+    """
+    with app.app_context():
+        user = _nuevo_usuario("venc2@example.com")
+        hoy_utc = datetime.now(timezone.utc).date()
+        tarea = TaskService.create_task(
+            user_id=user.id, title="Vence hoy", due_date=hoy_utc
+        )
+        assert tarea.is_overdue is False
+
+
+def test_task_without_due_date_is_never_overdue(app):
+    """Sin fecha límite no hay vencimiento posible (FR-012)."""
+    with app.app_context():
+        user = _nuevo_usuario("venc3@example.com")
+        tarea = TaskService.create_task(user_id=user.id, title="Sin plazo")
+        assert tarea.is_overdue is False
+
+
+def test_completed_task_is_never_overdue(app):
+    """Una tarea completada nunca se marca vencida aunque su plazo pasara (FR-012, SC-005)."""
+    with app.app_context():
+        user = _nuevo_usuario("venc4@example.com")
+        tarea = TaskService.create_task(
+            user_id=user.id, title="Completada tarde", due_date=date.today() - timedelta(days=5)
+        )
+        TaskService.update_task_status(user_id=user.id, task_id=tarea.id, new_status="completed")
+        assert tarea.is_overdue is False
+
+
+def test_deleted_task_is_never_overdue(app):
+    """Una tarea eliminada nunca se marca vencida (FR-012, SC-005)."""
+    with app.app_context():
+        user = _nuevo_usuario("venc5@example.com")
+        tarea = TaskService.create_task(
+            user_id=user.id, title="Borrada tarde", due_date=date.today() - timedelta(days=5)
+        )
+        TaskService.delete_task(task_id=tarea.id, user_id=user.id)
+        assert tarea.is_overdue is False
