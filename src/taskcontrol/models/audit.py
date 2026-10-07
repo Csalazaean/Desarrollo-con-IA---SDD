@@ -7,6 +7,17 @@ class AuditLog(db.Model):
 
     __tablename__ = "audit_logs"
 
+    # Acciones estándar de auditoría (Principio VIII)
+    ACTION_TASK_CREATED = "TASK_CREATED"
+    ACTION_STATUS_CHANGED = "STATUS_CHANGED"
+    ACTION_TASK_UPDATED = "TASK_UPDATED"
+    ACTION_TASK_DELETED = "TASK_DELETED"
+    ACTION_TASK_REOPENED = "TASK_REOPENED"
+    ACTION_USER_REGISTERED = "USER_REGISTERED"
+    ACTION_USER_LOGIN = "USER_LOGIN"
+    ACTION_PASSWORD_RESET_REQUESTED = "PASSWORD_RESET_REQUESTED"
+    ACTION_PASSWORD_RESET_COMPLETED = "PASSWORD_RESET_COMPLETED"
+
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     actor_id = db.Column(db.Integer, nullable=False, index=True)
     action = db.Column(db.String(50), nullable=False)

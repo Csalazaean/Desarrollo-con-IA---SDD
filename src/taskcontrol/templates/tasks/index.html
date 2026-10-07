@@ -84,9 +84,16 @@
                                 <input type="hidden" name="status" value="completed">
                                 <button type="submit" class="btn btn-primary btn-sm">Completar</button>
                             </form>
+                        {% elif task.status == 'completed' %}
+                            <form action="{{ url_for('tasks.reopen_task_route', task_id=task.id) }}" method="POST" class="inline-form">
+                                <button type="submit" class="btn btn-secondary btn-sm">Reabrir</button>
+                            </form>
                         {% endif %}
 
                         <a href="{{ url_for('tasks.edit_task_route', task_id=task.id) }}" class="btn btn-secondary btn-sm">Editar</a>
+                        <form action="{{ url_for('tasks.delete_task_route', task_id=task.id) }}" method="POST" class="inline-form">
+                            <button type="submit" class="btn btn-danger btn-sm">Eliminar</button>
+                        </form>
                     </div>
                 </div>
             {% endfor %}

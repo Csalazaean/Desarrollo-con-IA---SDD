@@ -35,4 +35,29 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
     });
+
+    // 4. Confirmación antes de acciones destructivas o de cambio de estado (HU-05, HU-06).
+    // La confirmación vive aquí y no en un atributo onsubmit para mantener el JavaScript
+    // separado de la plantilla (Principio II). El backend valida igual: esto solo evita
+    // el clic accidental, nunca sustituye la autorización del servidor (Principio VII).
+    const confirmaciones = [
+        {
+            selector: "form[action*='/delete']",
+            mensaje: "¿Estás seguro de que deseas eliminar esta tarea? Podrás consultarla en el historial de auditoría."
+        },
+        {
+            selector: "form[action*='/reopen']",
+            mensaje: "¿Deseas reabrir esta tarea completada? Volverá al estado pendiente."
+        }
+    ];
+
+    confirmaciones.forEach(({ selector, mensaje }) => {
+        document.querySelectorAll(selector).forEach(form => {
+            form.addEventListener("submit", (e) => {
+                if (!window.confirm(mensaje)) {
+                    e.preventDefault();
+                }
+            });
+        });
+    });
 });

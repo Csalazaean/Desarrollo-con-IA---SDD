@@ -1,3 +1,6 @@
+import re
+
+
 def _login_as(client, email="user@example.com", password="Password123!"):
     client.post(
         "/auth/register",
@@ -164,3 +167,216 @@ def test_edit_task_route(client):
         headers={"Accept": "application/json"},
     )
     assert resp_empty.status_code == 400
+
+
+# --- US1 (HU-05): Eliminación Lógica de Tareas (Endpoints) ---
+
+def test_delete_task_unauthenticated(client):
+    """Verifica 401 Unauthorized sin sesión activa."""
+    resp = client.post("/tasks/1/delete", headers={"Accept": "application/json"})
+    assert resp.status_code == 401
+
+
+def test_delete_task_success_json(client):
+    """Verifica eliminación lógica vía POST y DELETE con respuesta JSON 200 OK."""
+    _login_as(client, "deletejson@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea para borrar en JSON"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    resp = client.post(f"/tasks/{task_id}/delete", headers={"Accept": "application/json"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "success"
+    assert data["data"]["task_id"] == task_id
+    assert data["data"]["is_deleted"] is True
+
+    # Comprobar que ya no aparece en GET /tasks
+    list_resp = client.get("/tasks", headers={"Accept": "application/json"})
+    active_ids = [t["id"] for t in list_resp.get_json()["data"]["tasks"]]
+    assert task_id not in active_ids
+
+
+def test_delete_task_success_html(client):
+    """Verifica eliminación lógica con formulario HTML retornando 302 Found hacia /tasks."""
+    _login_as(client, "deletehtml@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea para borrar en HTML"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    resp = client.post(f"/tasks/{task_id}/delete", headers={"Accept": "text/html"})
+    assert resp.status_code == 302
+    assert "/tasks" in resp.headers["Location"]
+
+
+def test_delete_task_unauthorized_other_user(client):
+    """Verifica que un usuario no pueda eliminar la tarea de otro (404 Not Found)."""
+    _login_as(client, "owner@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea privada"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    _login_as(client, "intruder@example.com")
+    resp = client.post(f"/tasks/{task_id}/delete", headers={"Accept": "application/json"})
+    assert resp.status_code == 404
+
+
+def test_delete_task_already_deleted_fails(client):
+    """Verifica que eliminar una tarea ya eliminada falle con 400/409 TASK_ALREADY_DELETED."""
+    _login_as(client, "doubledelete@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea doble eliminación"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    first_delete = client.post(f"/tasks/{task_id}/delete", headers={"Accept": "application/json"})
+    assert first_delete.status_code == 200
+
+    second_delete = client.post(f"/tasks/{task_id}/delete", headers={"Accept": "application/json"})
+    assert second_delete.status_code in {400, 409}
+    assert second_delete.get_json()["code"] == "TASK_ALREADY_DELETED"
+
+
+# --- US2 (HU-06): Reapertura de Tareas Completadas (Endpoints) ---
+
+def test_reopen_task_unauthenticated(client):
+    """Verifica 401 Unauthorized sin sesión activa."""
+    resp = client.post("/tasks/1/reopen", headers={"Accept": "application/json"})
+    assert resp.status_code == 401
+
+
+def test_reopen_task_success_json(client):
+    """Verifica reapertura exitosa vía JSON 200 OK retornando status pending."""
+    _login_as(client, "reopenjson@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea a reabrir JSON"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    # Completar la tarea
+    client.post(
+        f"/tasks/{task_id}/status",
+        data={"status": "completed"},
+        headers={"Accept": "application/json"},
+    )
+
+    # Reabrir la tarea
+    resp = client.post(f"/tasks/{task_id}/reopen", headers={"Accept": "application/json"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "success"
+    assert data["data"]["task_id"] == task_id
+    assert data["data"]["status"] == "pending"
+
+
+def test_reopen_task_success_html(client):
+    """Verifica reapertura exitosa vía formulario HTML retornando 302 Found hacia /tasks."""
+    _login_as(client, "reopenhtml@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea a reabrir HTML"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    client.post(
+        f"/tasks/{task_id}/status",
+        data={"status": "completed"},
+        headers={"Accept": "application/json"},
+    )
+
+    resp = client.post(f"/tasks/{task_id}/reopen", headers={"Accept": "text/html"})
+    assert resp.status_code == 302
+    assert "/tasks" in resp.headers["Location"]
+
+
+def test_reopen_task_invalid_state_fails(client):
+    """Verifica error 400 si se intenta reabrir una tarea no completada."""
+    _login_as(client, "reopeninvalid@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea aún pendiente"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    resp = client.post(f"/tasks/{task_id}/reopen", headers={"Accept": "application/json"})
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] in {"INVALID_STATE_FOR_REOPEN", "INVALID_STATE_TRANSITION"}
+
+
+def test_reopen_task_unauthorized_other_user(client):
+    """Verifica que un usuario no pueda reabrir tareas de otro (404 Not Found)."""
+    _login_as(client, "owner2@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea completada de owner2"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+    client.post(f"/tasks/{task_id}/status", data={"status": "completed"}, headers={"Accept": "application/json"})
+
+    _login_as(client, "intruder2@example.com")
+    resp = client.post(f"/tasks/{task_id}/reopen", headers={"Accept": "application/json"})
+    assert resp.status_code == 404
+
+
+# --- Regresión de interfaz: los formularios renderizados deben ser utilizables ---
+
+
+def test_rendered_delete_form_action_accepts_post(client):
+    """El formulario "Eliminar" del listado debe funcionar tal como se renderiza.
+
+    Regresión: `url_for` resolvía al endpoint que solo acepta DELETE, así que el
+    formulario del navegador apuntaba a /tasks/<id> y respondía 405. Las pruebas
+    anteriores no lo detectaban porque invocaban /tasks/<id>/delete directamente.
+    """
+    _login_as(client, "formdelete@example.com")
+    client.post("/tasks", data={"title": "Tarea para borrar desde la interfaz"})
+
+    pagina = client.get("/tasks").get_data(as_text=True)
+    accion = re.search(r'action="(/tasks/\d+(?:/delete)?)" method="POST"', pagina)
+    assert accion, "El listado debe renderizar el formulario de eliminación"
+
+    respuesta = client.post(accion.group(1))
+    assert respuesta.status_code != 405, (
+        f"El formulario apunta a {accion.group(1)}, que no acepta POST"
+    )
+    assert respuesta.status_code in (200, 302)
+
+    # Y la tarea efectivamente desaparece del listado
+    restante = client.get("/tasks").get_data(as_text=True)
+    assert "Tarea para borrar desde la interfaz" not in restante
+
+
+def test_rendered_reopen_form_action_accepts_post(client):
+    """El formulario "Reabrir" de una tarea completada debe funcionar tal como se renderiza."""
+    _login_as(client, "formreopen@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea para reabrir desde la interfaz"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+    client.post(f"/tasks/{task_id}/status", data={"status": "completed"})
+
+    pagina = client.get("/tasks").get_data(as_text=True)
+    accion = re.search(r'action="(/tasks/\d+/reopen)"', pagina)
+    assert accion, "Una tarea completada debe ofrecer el formulario de reapertura"
+
+    respuesta = client.post(accion.group(1))
+    assert respuesta.status_code != 405
+    assert respuesta.status_code in (200, 302)

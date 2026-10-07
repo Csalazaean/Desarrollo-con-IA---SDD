@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from src.taskcontrol.extensions import db
 from src.taskcontrol.models.task import Task
 from src.taskcontrol.services.audit_service import AuditService
@@ -16,6 +16,11 @@ class TaskNotFoundError(Exception):
 
 class InvalidStateTransitionError(Exception):
     """Transición de estado no permitida por la máquina de estados."""
+    pass
+
+
+class TaskAlreadyDeletedError(Exception):
+    """Operación rechazada porque la tarea ya fue eliminada lógicamente."""
     pass
 
 
@@ -66,19 +71,77 @@ class TaskService:
         return task
 
     @classmethod
-    def get_user_tasks(cls, user_id: int, status: str = None):
+    def get_user_tasks(cls, user_id: int, status: str = None, include_deleted: bool = False):
         """Lista las tareas del usuario autenticado con filtrado opcional."""
         query = Task.query.filter_by(user_id=user_id)
+        if not include_deleted:
+            query = query.filter_by(is_deleted=False)
         if status in {"pending", "in_progress", "completed"}:
             query = query.filter_by(status=status)
         return query.order_by(Task.created_at.desc()).all()
 
     @classmethod
-    def get_task_by_id(cls, user_id: int, task_id: int) -> Task:
+    def get_task_by_id(cls, user_id: int, task_id: int, include_deleted: bool = False) -> Task:
         """Obtiene una tarea verificando la propiedad del usuario autenticado."""
         task = Task.query.filter_by(id=task_id, user_id=user_id).first()
         if not task:
             raise TaskNotFoundError("Tarea no encontrada")
+        if task.is_deleted and not include_deleted:
+            raise TaskNotFoundError("Tarea no encontrada o eliminada")
+        return task
+
+    @classmethod
+    def delete_task(cls, task_id: int, user_id: int) -> Task:
+        """Elimina lógicamente una tarea del usuario (soft delete, Principio VI y VIII)."""
+        task = cls.get_task_by_id(user_id=user_id, task_id=task_id, include_deleted=True)
+        if task.is_deleted:
+            raise TaskAlreadyDeletedError("La tarea ya fue eliminada previamente")
+
+        now_utc = datetime.now(timezone.utc)
+        task.is_deleted = True
+        task.deleted_at = now_utc
+        db.session.commit()
+
+        # Auditoría obligatoria (Principio VIII)
+        AuditService.log_event(
+            actor_id=user_id,
+            action="TASK_DELETED",
+            entity_id=task.id,
+            details={"title": task.title, "deleted_at": now_utc.isoformat()},
+        )
+        db.session.commit()
+
+        return task
+
+    @classmethod
+    def reopen_task(cls, task_id: int, user_id: int) -> Task:
+        """Reabre una tarea completada devolviéndola al estado pending (HU-06)."""
+        task = cls.get_task_by_id(user_id=user_id, task_id=task_id, include_deleted=True)
+        if task.is_deleted:
+            raise TaskAlreadyDeletedError("No se puede reabrir una tarea eliminada")
+
+        if task.status != "completed":
+            raise InvalidStateTransitionError(
+                "Solo se pueden reabrir tareas que se encuentren en estado 'completada'"
+            )
+
+        old_status = task.status
+        task.status = "pending"
+        db.session.commit()
+
+        # Auditoría específica de reapertura (Principio VIII)
+        AuditService.log_event(
+            actor_id=user_id,
+            action="TASK_REOPENED",
+            entity_id=task.id,
+            details={
+                "previous_status": old_status,
+                "new_status": "pending",
+                "trigger": "user_reopen",
+            },
+        )
+        db.session.commit()
+
         return task
 
     @classmethod

@@ -109,6 +109,8 @@ body {
 .btn-primary:hover { background-color: var(--primary-hover); }
 .btn-secondary { background-color: #e2e8f0; color: #334155; }
 .btn-secondary:hover { background-color: #cbd5e1; }
+.btn-danger { background-color: #ef4444; color: white; }
+.btn-danger:hover { background-color: #dc2626; }
 .btn-sm { padding: 0.35rem 0.75rem; font-size: 0.85rem; }
 
 .form-card {
