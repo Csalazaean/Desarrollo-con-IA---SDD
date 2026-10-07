@@ -80,11 +80,12 @@ Representa un proyecto, ámbito o etiqueta temática creada por un usuario para 
 | `user_id` | `Integer` | FK (`users.id`), Not Null, Index | Propietario de la categoría |
 | `name` | `String(50)` | Not Null | Nombre de la categoría (ej. "Trabajo", "Personal") |
 | `description` | `Text` | Nullable | Descripción o notas sobre la categoría |
-| `color` | `String(7)` | Nullable | Código hexadecimal de color (ej. `#2563EB`) |
+| `color` | `String(7)` | Nullable, formato estricto `^#[0-9A-Fa-f]{6}$` si se provee | Código hexadecimal de color (ej. `#2563EB`) |
 | `created_at` | `DateTime` | Not Null, Default UTC | Fecha y hora de creación |
 
 **Restricciones de Integridad y Validación**:
 - `UniqueConstraint('user_id', 'name', name='uq_user_category_name')`: Garantiza que un usuario no pueda registrar dos categorías con el mismo nombre. Usuarios diferentes sí pueden compartir nombres idénticos.
+- `color`, si se provee, se valida contra `^#[0-9A-Fa-f]{6}$`; un valor que no cumpla el formato se rechaza con `400 Bad Request` (ver spec Clarifications, Session 2026-10-06, Q3).
 - Al eliminar una categoría: **No se permite el borrado en cascada**. Las tareas vinculadas se desasocian fijando `category_id = NULL`.
 
 ---

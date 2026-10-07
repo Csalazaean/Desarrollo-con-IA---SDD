@@ -8,6 +8,7 @@ from src.taskcontrol.services.task_service import (
     InvalidStateTransitionError,
     TaskAlreadyDeletedError,
     InvalidTaskStateTransitionError,
+    InvalidPriorityError,
 )
 from src.taskcontrol.models.audit import AuditLog
 
@@ -290,3 +291,171 @@ def test_cannot_reopen_non_completed_or_deleted_task(app, test_user_id):
         TaskService.delete_task(user_id=test_user_id, task_id=deleted_task.id)
         with pytest.raises(TaskNotFoundError):
             TaskService.reopen_task(user_id=test_user_id, task_id=deleted_task.id)
+
+
+# --- US1 (Incremento 3): Prioridad de Tareas y Ordenamiento (HU-07) ---
+
+def test_task_priority_default_is_medium(app, test_user_id):
+    """Verifica que una tarea creada sin prioridad explícita quede en 'medium'."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Sin Prioridad")
+        assert task.priority == "medium"
+
+
+def test_create_task_with_explicit_priority(app, test_user_id):
+    """Verifica que se pueda fijar la prioridad en el mismo paso de creación."""
+    with app.app_context():
+        task = TaskService.create_task(
+            user_id=test_user_id, title="Tarea Urgente", priority="high"
+        )
+        assert task.priority == "high"
+
+
+def test_create_task_invalid_priority_rejected(app, test_user_id):
+    """Verifica que un valor de prioridad fuera del conjunto permitido sea rechazado."""
+    with app.app_context():
+        with pytest.raises(InvalidPriorityError):
+            TaskService.create_task(
+                user_id=test_user_id, title="Tarea Inválida", priority="urgente"
+            )
+
+
+def test_update_task_priority_success(app, test_user_id):
+    """Verifica que se pueda cambiar la prioridad de una tarea propia y que quede auditado."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea a Repriorizar")
+        updated = TaskService.update_task_priority(
+            user_id=test_user_id, task_id=task.id, priority="low"
+        )
+        assert updated.priority == "low"
+
+        audit = AuditLog.query.filter_by(action="TASK_UPDATED", entity_id=task.id).first()
+        assert audit is not None
+
+
+def test_update_task_priority_invalid_value_rejected(app, test_user_id):
+    """Verifica que update_task_priority rechace valores fuera del conjunto permitido."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Protegida")
+        with pytest.raises(InvalidPriorityError):
+            TaskService.update_task_priority(
+                user_id=test_user_id, task_id=task.id, priority="critica"
+            )
+
+
+def test_cannot_update_priority_of_other_users_task(app, test_user_id, second_user_id):
+    """Verifica aislamiento por usuario (Cero IDOR) al cambiar prioridad."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea de User 1")
+        with pytest.raises(TaskNotFoundError):
+            TaskService.update_task_priority(
+                user_id=second_user_id, task_id=task.id, priority="high"
+            )
+
+
+def test_tasks_sorted_by_priority_descending_high_medium_low(app, test_user_id):
+    """Verifica el orden jerárquico alta -> media -> baja al pedir sort='priority_desc'."""
+    with app.app_context():
+        TaskService.create_task(user_id=test_user_id, title="Baja", priority="low")
+        TaskService.create_task(user_id=test_user_id, title="Alta", priority="high")
+        TaskService.create_task(user_id=test_user_id, title="Media", priority="medium")
+
+        tasks = TaskService.get_user_tasks(user_id=test_user_id, sort="priority_desc")
+        assert [t.priority for t in tasks] == ["high", "medium", "low"]
+
+
+def test_same_priority_tasks_sorted_by_due_date_ascending_nulls_last(app, test_user_id):
+    """Verifica el desempate por due_date ascendente, con nulos al final del grupo (clarify Q2)."""
+    with app.app_context():
+        from datetime import date as date_cls
+
+        t_no_date = TaskService.create_task(
+            user_id=test_user_id, title="Alta Sin Fecha", priority="high"
+        )
+        t_later = TaskService.create_task(
+            user_id=test_user_id,
+            title="Alta Fecha Lejana",
+            priority="high",
+            due_date=date_cls(2026, 12, 31),
+        )
+        t_sooner = TaskService.create_task(
+            user_id=test_user_id,
+            title="Alta Fecha Próxima",
+            priority="high",
+            due_date=date_cls(2026, 11, 1),
+        )
+
+        tasks = TaskService.get_user_tasks(user_id=test_user_id, sort="priority_desc")
+        assert [t.id for t in tasks] == [t_sooner.id, t_later.id, t_no_date.id]
+
+
+def test_tasks_sorted_by_priority_respects_status_filters(app, test_user_id):
+    """Verifica que el filtro por estado se aplique junto con el ordenamiento por prioridad."""
+    with app.app_context():
+        t1 = TaskService.create_task(user_id=test_user_id, title="Pendiente Alta", priority="high")
+        t2 = TaskService.create_task(user_id=test_user_id, title="Completada Alta", priority="high")
+        TaskService.update_task_status(user_id=test_user_id, task_id=t2.id, new_status="completed")
+
+        tasks = TaskService.get_user_tasks(
+            user_id=test_user_id, status="pending", sort="priority_desc"
+        )
+        assert [t.id for t in tasks] == [t1.id]
+
+
+# --- US3 (Incremento 3): Indicación Confiable de Tareas Vencidas (HU-09) ---
+
+def test_task_overdue_when_due_date_past_and_not_completed(app, test_user_id):
+    """Verifica que una tarea pendiente con fecha límite pasada se marque is_overdue=True."""
+    with app.app_context():
+        from datetime import date, timedelta
+
+        yesterday = date.today() - timedelta(days=1)
+        task = TaskService.create_task(
+            user_id=test_user_id, title="Tarea Vencida", due_date=yesterday
+        )
+        assert task.is_overdue is True
+
+
+def test_completed_task_never_marked_overdue_even_if_due_date_past(app, test_user_id):
+    """Verifica que una tarea completada NUNCA se marque como vencida, pase lo que pase con due_date."""
+    with app.app_context():
+        from datetime import date, timedelta
+
+        yesterday = date.today() - timedelta(days=1)
+        task = TaskService.create_task(
+            user_id=test_user_id, title="Tarea Completada Vencida", due_date=yesterday
+        )
+        TaskService.update_task_status(user_id=test_user_id, task_id=task.id, new_status="completed")
+        assert task.is_overdue is False
+
+
+def test_deleted_task_never_marked_overdue(app, test_user_id):
+    """Verifica que una tarea eliminada lógicamente NUNCA se marque como vencida."""
+    with app.app_context():
+        from datetime import date, timedelta
+
+        yesterday = date.today() - timedelta(days=1)
+        task = TaskService.create_task(
+            user_id=test_user_id, title="Tarea Eliminada Vencida", due_date=yesterday
+        )
+        TaskService.delete_task(user_id=test_user_id, task_id=task.id)
+        assert task.is_overdue is False
+
+
+def test_task_without_due_date_never_overdue(app, test_user_id):
+    """Verifica que una tarea sin fecha límite nunca se marque como vencida."""
+    with app.app_context():
+        task = TaskService.create_task(user_id=test_user_id, title="Tarea Sin Fecha")
+        assert task.is_overdue is False
+
+
+def test_task_due_today_not_overdue_until_day_ends(app, test_user_id):
+    """Verifica que una tarea con fecha límite hoy (UTC) no se marque como vencida durante el día en curso."""
+    with app.app_context():
+        from datetime import datetime, timezone
+
+        today_utc = datetime.now(timezone.utc).date()
+        task = TaskService.create_task(
+            user_id=test_user_id, title="Tarea Hoy", due_date=today_utc
+        )
+        assert task.is_overdue is False

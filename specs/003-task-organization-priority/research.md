@@ -28,7 +28,7 @@ La historia `HU-07` requiere que toda tarea tenga una prioridad (`high`, `medium
       else_=4
   )
   ```
-  Al solicitar orden descendente (`sort=priority_desc`), la consulta SQL aplica `.order_by(priority_order.asc(), Task.created_at.desc())` para mostrar primero las tareas de prioridad alta, luego media y finalmente baja.
+  Al solicitar orden descendente (`sort=priority_desc`), la consulta SQL aplica `.order_by(priority_order.asc(), Task.due_date.is_(None), Task.due_date.asc())` para mostrar primero las tareas de prioridad alta, luego media y finalmente baja; dentro de cada nivel, desempata por `due_date` ascendente dejando al final las tareas sin fecha límite (actualizado tras `/speckit-clarify`, Session 2026-10-06, Q2 — la versión previa de esta investigación usaba `created_at.desc()`).
 - **Compatibilidad con Filtros Preexistentes**:
   El ordenamiento por prioridad se concatena en `TaskService.get_user_tasks` después de aplicar los filtros `user_id`, `is_deleted == False` y `status == requested_status`, sin romper el comportamiento de los Incrementos 1 y 2.
 

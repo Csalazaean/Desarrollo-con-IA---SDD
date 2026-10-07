@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Mis Categorías - TaskControl{% endblock %}
+
+{% block content %}
+<div class="categories-page">
+    <h2 style="margin-bottom: 1.5rem;">Mis Categorías</h2>
+
+    <!-- Formulario de Creación de Categoría (HU-08) -->
+    <div class="form-card" style="max-width: 100%; margin: 0 0 2rem 0; padding: 1.5rem;">
+        <h3 style="margin-bottom: 1rem; font-size: 1.1rem;">Nueva Categoría</h3>
+        <form action="{{ url_for('categories.create_category_route') }}" method="POST">
+            <div style="display: grid; grid-template-columns: 2fr 2fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="name">Nombre *</label>
+                    <input type="text" id="name" name="name" class="form-control" required maxlength="50" placeholder="Trabajo, Personal, Universidad...">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="description">Descripción (opcional)</label>
+                    <input type="text" id="description" name="description" class="form-control" placeholder="Detalles adicionales...">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="color">Color (opcional)</label>
+                    <input type="color" id="color" name="color" class="form-control" value="#2563EB" style="padding: 0.25rem;">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">Crear Categoría</button>
+        </form>
+    </div>
+
+    <!-- Listado de Categorías -->
+    <div class="tasks-list">
+        {% if categories %}
+            {% for category in categories %}
+                <div class="task-card">
+                    <div style="flex: 1;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+                            {% if category.color %}
+                                <span style="display: inline-block; width: 14px; height: 14px; border-radius: 50%; background-color: {{ category.color }};"></span>
+                            {% endif %}
+                            <h4 style="font-size: 1.1rem; font-weight: 600;">{{ category.name }}</h4>
+                            <span class="badge badge-pending">{{ category.task_count }} tarea(s)</span>
+                        </div>
+                        {% if category.description %}
+                            <p style="color: var(--text-muted); font-size: 0.95rem;">{{ category.description }}</p>
+                        {% endif %}
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <details>
+                            <summary class="btn btn-secondary btn-sm" style="display: inline-block; cursor: pointer;">Editar</summary>
+                            <form action="{{ url_for('categories.edit_category_route', category_id=category.id) }}" method="POST" style="margin-top: 0.75rem; display: grid; gap: 0.5rem; min-width: 220px;">
+                                <input type="text" name="name" class="form-control" value="{{ category.name }}" maxlength="50" required>
+                                <input type="text" name="description" class="form-control" value="{{ category.description or '' }}" placeholder="Descripción">
+                                <input type="color" name="color" class="form-control" value="{{ category.color or '#2563EB' }}" style="padding: 0.25rem;">
+                                <button type="submit" class="btn btn-primary btn-sm">Guardar Cambios</button>
+                            </form>
+                        </details>
+
+                        <form action="{{ url_for('categories.delete_category_route', category_id=category.id) }}" method="POST" class="inline-form" data-confirm="¿Eliminar esta categoría? Las tareas asociadas quedarán sin categoría (no se eliminan).">
+                            <button type="submit" class="btn btn-danger btn-sm">Eliminar</button>
+                        </form>
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div style="text-align: center; padding: 3rem 1rem; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); color: var(--text-muted);">
+                <p style="font-size: 1.1rem;">No tienes categorías registradas.</p>
+                <p style="font-size: 0.9rem;">Crea una nueva categoría utilizando el formulario superior.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

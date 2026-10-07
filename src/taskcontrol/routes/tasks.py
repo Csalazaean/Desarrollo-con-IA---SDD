@@ -17,7 +17,9 @@ from src.taskcontrol.services.task_service import (
     InvalidStateTransitionError,
     TaskAlreadyDeletedError,
     InvalidTaskStateTransitionError,
+    InvalidPriorityError,
 )
+from src.taskcontrol.services.category_service import CategoryNotFoundError, CategoryService
 
 tasks_bp = Blueprint("tasks", __name__)
 
@@ -47,8 +49,12 @@ def list_tasks():
     """Listado y filtrado de tareas del usuario autenticado (HU-02)."""
     user_id = session["user_id"]
     status_filter = request.args.get("status")
+    sort = request.args.get("sort")
+    category_filter = request.args.get("category_id")
 
-    tasks = TaskService.get_user_tasks(user_id=user_id, status=status_filter)
+    tasks = TaskService.get_user_tasks(
+        user_id=user_id, status=status_filter, sort=sort, category_id=category_filter
+    )
 
     if _is_json_request():
         return (
@@ -65,8 +71,15 @@ def list_tasks():
             200,
         )
 
+    categories = CategoryService.list_user_categories(user_id=user_id)
+
     return render_template(
-        "tasks/index.html", tasks=tasks, current_status=status_filter
+        "tasks/index.html",
+        tasks=tasks,
+        current_status=status_filter,
+        current_sort=sort,
+        current_category=category_filter,
+        categories=categories,
     )
 
 
@@ -81,6 +94,7 @@ def create_task_route():
     description = data.get("description")
     due_date_str = data.get("due_date")
     due_date = _parse_due_date(due_date_str)
+    priority = data.get("priority") or "medium"
 
     try:
         task = TaskService.create_task(
@@ -88,6 +102,7 @@ def create_task_route():
             title=title,
             description=description,
             due_date=due_date,
+            priority=priority,
         )
 
         if _is_json_request():
@@ -120,6 +135,132 @@ def create_task_route():
 
         flash(str(e), "error")
         return redirect(url_for("tasks.list_tasks"))
+
+    except InvalidPriorityError as e:
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "INVALID_PRIORITY",
+                        "message": str(e),
+                    }
+                ),
+                400,
+            )
+
+        flash(str(e), "error")
+        return redirect(url_for("tasks.list_tasks"))
+
+
+@tasks_bp.route("/<int:task_id>/priority", methods=["POST", "PATCH"])
+@login_required
+def update_priority_route(task_id: int):
+    """Cambio de prioridad de una tarea (HU-07)."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or request.form
+    priority = data.get("priority")
+
+    try:
+        task = TaskService.update_task_priority(
+            user_id=user_id, task_id=task_id, priority=priority
+        )
+
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Prioridad actualizada exitosamente",
+                        "data": {"task_id": task.id, "priority": task.priority},
+                    }
+                ),
+                200,
+            )
+
+        flash("Prioridad actualizada.", "success")
+        return redirect(url_for("tasks.list_tasks"))
+
+    except TaskNotFoundError:
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "TASK_NOT_FOUND",
+                        "message": "Tarea no encontrada",
+                    }
+                ),
+                404,
+            )
+        flash("Tarea no encontrada.", "error")
+        return redirect(url_for("tasks.list_tasks")), 404
+
+    except InvalidPriorityError as e:
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "code": "INVALID_PRIORITY",
+                        "message": str(e),
+                    }
+                ),
+                400,
+            )
+        flash(str(e), "error")
+        return redirect(url_for("tasks.list_tasks")), 400
+
+
+@tasks_bp.route("/<int:task_id>/category", methods=["POST", "PATCH"])
+@login_required
+def assign_category_route(task_id: int):
+    """Asignación (o desasignación) de categoría a una tarea (HU-08)."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or request.form
+    category_id = data.get("category_id")
+    if category_id in ("", "null", "none", None):
+        category_id = None
+    else:
+        category_id = int(category_id)
+
+    try:
+        task = TaskService.assign_category(
+            user_id=user_id, task_id=task_id, category_id=category_id
+        )
+
+        if _is_json_request():
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": "Categoría de la tarea actualizada",
+                        "data": task.to_dict(),
+                    }
+                ),
+                200,
+            )
+
+        flash("Categoría de la tarea actualizada.", "success")
+        return redirect(url_for("tasks.list_tasks"))
+
+    except TaskNotFoundError:
+        if _is_json_request():
+            return (
+                jsonify({"status": "error", "code": "TASK_NOT_FOUND", "message": "Tarea no encontrada"}),
+                404,
+            )
+        flash("Tarea no encontrada.", "error")
+        return redirect(url_for("tasks.list_tasks")), 404
+
+    except CategoryNotFoundError:
+        if _is_json_request():
+            return (
+                jsonify({"status": "error", "code": "CATEGORY_NOT_FOUND", "message": "Categoría no encontrada"}),
+                404,
+            )
+        flash("Categoría no encontrada.", "error")
+        return redirect(url_for("tasks.list_tasks")), 404
 
 
 @tasks_bp.route("/<int:task_id>/status", methods=["POST", "PATCH"])
@@ -207,7 +348,8 @@ def edit_task_route(task_id: int):
         return redirect(url_for("tasks.list_tasks")), 404
 
     if request.method == "GET":
-        return render_template("tasks/edit.html", task=task)
+        categories = CategoryService.list_user_categories(user_id=user_id)
+        return render_template("tasks/edit.html", task=task, categories=categories)
 
     data = request.get_json(silent=True) or request.form
     title = data.get("title", "")

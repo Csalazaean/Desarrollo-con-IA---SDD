@@ -12,7 +12,7 @@
     <div class="form-card" style="max-width: 100%; margin: 0 0 2rem 0; padding: 1.5rem;">
         <h3 style="margin-bottom: 1rem; font-size: 1.1rem;">Nueva Tarea</h3>
         <form action="{{ url_for('tasks.create_task_route') }}" method="POST">
-            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+            <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
                 <div class="form-group" style="margin-bottom: 0;">
                     <label for="title">Título *</label>
                     <input type="text" id="title" name="title" class="form-control" required placeholder="¿Qué necesitas hacer?">
@@ -20,6 +20,14 @@
                 <div class="form-group" style="margin-bottom: 0;">
                     <label for="due_date">Fecha Límite</label>
                     <input type="date" id="due_date" name="due_date" class="form-control">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="priority">Prioridad</label>
+                    <select id="priority" name="priority" class="form-control">
+                        <option value="high">Alta</option>
+                        <option value="medium" selected>Media</option>
+                        <option value="low">Baja</option>
+                    </select>
                 </div>
             </div>
             <div class="form-group">
@@ -32,11 +40,29 @@
 
     <!-- Filtros de Estado (HU-02) -->
     <div class="filters">
-        <a href="{{ url_for('tasks.list_tasks') }}" class="filter-btn {% if not current_status %}active{% endif %}">Todas</a>
-        <a href="{{ url_for('tasks.list_tasks', status='pending') }}" class="filter-btn {% if current_status == 'pending' %}active{% endif %}">Pendientes</a>
-        <a href="{{ url_for('tasks.list_tasks', status='in_progress') }}" class="filter-btn {% if current_status == 'in_progress' %}active{% endif %}">En Progreso</a>
-        <a href="{{ url_for('tasks.list_tasks', status='completed') }}" class="filter-btn {% if current_status == 'completed' %}active{% endif %}">Completadas</a>
+        <a href="{{ url_for('tasks.list_tasks', sort=current_sort) }}" class="filter-btn {% if not current_status %}active{% endif %}">Todas</a>
+        <a href="{{ url_for('tasks.list_tasks', status='pending', sort=current_sort) }}" class="filter-btn {% if current_status == 'pending' %}active{% endif %}">Pendientes</a>
+        <a href="{{ url_for('tasks.list_tasks', status='in_progress', sort=current_sort) }}" class="filter-btn {% if current_status == 'in_progress' %}active{% endif %}">En Progreso</a>
+        <a href="{{ url_for('tasks.list_tasks', status='completed', sort=current_sort) }}" class="filter-btn {% if current_status == 'completed' %}active{% endif %}">Completadas</a>
     </div>
+
+    <!-- Ordenamiento por Prioridad (HU-07) -->
+    <div class="filters" style="margin-top: 0.5rem;">
+        <a href="{{ url_for('tasks.list_tasks', status=current_status) }}" class="filter-btn {% if not current_sort %}active{% endif %}">Orden: Más reciente</a>
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, sort='priority_desc') }}" class="filter-btn {% if current_sort == 'priority_desc' %}active{% endif %}">Prioridad: Alta primero</a>
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, sort='priority_asc') }}" class="filter-btn {% if current_sort == 'priority_asc' %}active{% endif %}">Prioridad: Baja primero</a>
+    </div>
+
+    <!-- Filtro por Categoría (HU-08) -->
+    {% if categories %}
+    <div class="filters" style="margin-top: 0.5rem;">
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, sort=current_sort) }}" class="filter-btn {% if not current_category %}active{% endif %}">Todas las categorías</a>
+        <a href="{{ url_for('tasks.list_tasks', status=current_status, sort=current_sort, category_id='none') }}" class="filter-btn {% if current_category == 'none' %}active{% endif %}">Sin categoría</a>
+        {% for category in categories %}
+            <a href="{{ url_for('tasks.list_tasks', status=current_status, sort=current_sort, category_id=category.id) }}" class="filter-btn {% if current_category == category.id|string %}active{% endif %}">{{ category.name }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     <!-- Listado de Tareas (HU-02) -->
     <div class="tasks-list">
@@ -51,6 +77,15 @@
                                 {% elif task.status == 'completed' %}Completada
                                 {% endif %}
                             </span>
+                            <span class="badge badge-priority-{{ task.priority }}">
+                                {% if task.priority == 'high' %}Alta
+                                {% elif task.priority == 'medium' %}Media
+                                {% elif task.priority == 'low' %}Baja
+                                {% endif %}
+                            </span>
+                            {% if task.is_overdue %}
+                                <span class="badge badge-overdue">⚠️ Vencida</span>
+                            {% endif %}
                             <h4 style="font-size: 1.1rem; font-weight: 600;">{{ task.title }}</h4>
                         </div>
                         {% if task.description %}
@@ -61,7 +96,20 @@
                                 <span>📅 Vence: {{ task.due_date }}</span>
                             {% endif %}
                             <span>🕒 Creada: {{ task.created_at.strftime('%Y-%m-%d') if task.created_at else '' }}</span>
+                            {% if task.category %}
+                                <span>🏷️ {{ task.category.name }}</span>
+                            {% endif %}
                         </div>
+                        {% if categories %}
+                            <form action="{{ url_for('tasks.assign_category_route', task_id=task.id) }}" method="POST" class="inline-form" style="margin-top: 0.5rem;">
+                                <select name="category_id" class="form-control" style="display: inline-block; width: auto;" onchange="this.form.submit()">
+                                    <option value="" {% if not task.category %}selected{% endif %}>Sin categoría</option>
+                                    {% for category in categories %}
+                                        <option value="{{ category.id }}" {% if task.category and task.category.id == category.id %}selected{% endif %}>{{ category.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </form>
+                        {% endif %}
                     </div>
 
                     <!-- Acciones de Estado y Edición (HU-03, HU-04) -->

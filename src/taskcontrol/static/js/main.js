@@ -36,7 +36,22 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // 4. Confirmación previa para acciones destructivas o irreversibles (eliminar, reabrir)
+    // 4. Validación preventiva en el cliente para el formulario de categorías (HU-08)
+    // El campo color usa <input type="color">, por lo que el navegador ya garantiza
+    // un valor hexadecimal válido; solo se valida aquí el nombre obligatorio.
+    const categoryForms = document.querySelectorAll("form[action*='categories']");
+    categoryForms.forEach(form => {
+        form.addEventListener("submit", (e) => {
+            const nameInput = form.querySelector("input[name='name']");
+            if (nameInput && nameInput.value.trim() === "") {
+                e.preventDefault();
+                alert("El nombre de la categoría no puede estar vacío.");
+                nameInput.focus();
+            }
+        });
+    });
+
+    // 5. Confirmación previa para acciones destructivas o irreversibles (eliminar, reabrir)
     const confirmForms = document.querySelectorAll("form[data-confirm]");
     confirmForms.forEach(form => {
         form.addEventListener("submit", (e) => {

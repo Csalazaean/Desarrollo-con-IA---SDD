@@ -27,5 +27,20 @@
             <button type="submit" class="btn btn-primary">Guardar Cambios</button>
         </div>
     </form>
+
+    {% if categories %}
+    <form action="{{ url_for('tasks.assign_category_route', task_id=task.id) }}" method="POST" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
+        <div class="form-group">
+            <label for="category_id">Categoría</label>
+            <select id="category_id" name="category_id" class="form-control">
+                <option value="" {% if not task.category %}selected{% endif %}>Sin categoría</option>
+                {% for category in categories %}
+                    <option value="{{ category.id }}" {% if task.category and task.category.id == category.id %}selected{% endif %}>{{ category.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn btn-secondary btn-sm">Actualizar Categoría</button>
+    </form>
+    {% endif %}
 </div>
 {% endblock %}

@@ -128,6 +128,8 @@ tests/
   ```python
   category = db.relationship('Category', backref=db.backref('tasks', lazy='dynamic', passive_deletes=True))
   ```
+- **Asignación de prioridad en el momento de creación**: `TaskService.create_task` (Incremento 1) se extiende con un parámetro opcional `priority: str = 'medium'`, validado contra los 3 valores permitidos, para que el formulario de creación de tarea pueda fijar la prioridad en el mismo paso (HU-07, Acceptance Scenario 2: "crea **o** edita").
+  > **Corrección post-analyze**: la versión original del plan solo permitía fijar la prioridad mediante `POST /tasks/<id>/priority` después de crear la tarea — hallazgo E2 de `/speckit-analyze`.
 
 ---
 
@@ -157,6 +159,13 @@ tests/
     db.session.commit()
     ```
   - **Resultado**: El 100% de las tareas vinculadas permanecen en el sistema con `category_id = None` ("sin categoría"), sin borrado físico ni lógico.
+  - **Edición concurrente de una tarea cuya categoría fue eliminada** (ver spec Clarifications, Session 2026-10-06, Q1): no requiere lógica adicional — en el momento en que `delete_category` corre el `UPDATE` masivo, cualquier tarea afectada ya queda con `category_id = NULL` a nivel de base de datos antes de que la siguiente petición de guardado la lea. El guardado de una tarea **nunca** se rechaza por esta causa.
+- **Validación de Formato de `color`** (ver spec Clarifications, Session 2026-10-06, Q3): `CategoryService.create_category` y `update_category` DEBEN validar `color` con la expresión regular `^#[0-9A-Fa-f]{6}$` cuando el valor no sea `None`/vacío, arrojando `InvalidCategoryColorError` → `400 Bad Request` si no cumple.
+  > **Corrección post-clarify**: esta validación no existía en la versión original del plan; el modelo solo declaraba `color = db.Column(db.String(7))` sin ninguna regla de formato.
+- **Auditoría obligatoria (Principio VIII)**: `create_category` registra `CATEGORY_CREATED`, `update_category` registra `CATEGORY_UPDATED` y `delete_category` registra `CATEGORY_DELETED` — las 3 mutaciones de la entidad quedan auditadas, sin excepción.
+  > **Corrección post-analyze**: la versión original del plan solo mencionaba la auditoría de `delete_category`; `create_category` no tenía esta obligación explícita — hallazgo C1 (violación del Principio VIII) de `/speckit-analyze`.
+- **Conteo de tareas por categoría**: `CategoryService.list_user_categories` DEBE incluir `task_count` (número de tareas con `is_deleted=False` asociadas) en cada categoría retornada, tal como ya documentaba `contracts/category-contracts.md`.
+  > **Corrección post-analyze**: el plan nunca especificaba cómo se calculaba este campo, aunque el contrato ya lo exponía en su ejemplo de respuesta — hallazgo E3 de `/speckit-analyze`.
 
 ---
 
@@ -181,8 +190,11 @@ tests/
 
   if sort == 'priority_desc':
       priority_order = case((Task.priority == 'high', 1), (Task.priority == 'medium', 2), (Task.priority == 'low', 3), else_=4)
-      query = query.order_by(priority_order.asc(), Task.created_at.desc())
+      # Desempate dentro del mismo nivel de prioridad: due_date ascendente,
+      # con nulos al final del grupo (ver spec Clarifications, Session 2026-10-06)
+      query = query.order_by(priority_order.asc(), Task.due_date.is_(None), Task.due_date.asc())
   ```
+  > **Corrección post-clarify**: la versión original de este plan usaba `Task.created_at.desc()` como desempate, antes de que `/speckit-clarify` resolviera (Q2) que el criterio correcto es `due_date` ascendente con nulos al final.
 - **Contrato de Salida**: Cada objeto de tarea incluye `priority`, `category` (objeto con `id`, `name`, `color` o `null`) e `is_overdue` (booleano).
 
 #### B. Modificación de Prioridad
@@ -198,8 +210,10 @@ tests/
 - **Códigos**: `200 OK`, `404 Not Found` (si la categoría o tarea no pertenecen al usuario).
 
 #### D. Endpoints de Categorías (`categories_bp`)
-- `GET /categories`: Lista las categorías del usuario autenticado con conteo de tareas activas.
-- `POST /categories`: Crea nueva categoría (`{"name": "...", "description": "...", "color": "..."}`). Retorna `201 Created` o `400 Bad Request` si el nombre está duplicado para ese usuario.
+- `GET /categories`: Lista las categorías del usuario autenticado con `task_count` (conteo de tareas activas, `is_deleted=False`, asociadas a cada categoría).
+- `POST /categories`: Crea nueva categoría (`{"name": "...", "description": "...", "color": "..."}`). Retorna `201 Created`, `400 Bad Request` si el nombre está duplicado para ese usuario, o `400 Bad Request` si `color` no cumple el formato `#RRGGBB`. Registra auditoría `CATEGORY_CREATED`.
+- `POST /categories/<int:category_id>/edit`: Edita nombre, descripción y/o color de una categoría propia (`{"name": "...", "description": "...", "color": "..."}`), reutilizando las mismas validaciones que la creación (unicidad de nombre excluyendo la propia categoría, formato de color). Retorna `200 OK` / `302 Found`, `400 Bad Request` (nombre duplicado o color inválido), `404 Not Found` (categoría ajena o inexistente). Registra auditoría `CATEGORY_UPDATED`.
+  > **Corrección post-analyze**: este endpoint no existía en la versión original del plan, aunque FR-007 de la spec exige explícitamente "editar" categorías — hallazgo E1 de `/speckit-analyze`.
 - `POST /categories/<int:category_id>/delete`: Elimina la categoría y desvincula las tareas asignadas. Retorna `200 OK` / `302 Found`.
 
 ---
@@ -277,3 +291,7 @@ Siguiendo el ciclo *Test-First*, las siguientes pruebas unitarias y de servicio 
     Crea una tarea con fecha límite pasada pero eliminada lógicamente (`is_deleted=True`), verificando que `task.is_overdue` sea `False`.
 11. **`test_task_without_due_date_never_overdue`**:
     Verifica que tareas sin fecha límite (`due_date=None`) tengan `is_overdue == False`.
+12. **`test_same_priority_tasks_sorted_by_due_date_ascending_nulls_last`** (añadida tras `/speckit-clarify`, Q2):
+    Crea 3 tareas de prioridad `high` con `due_date` en distinto orden (una sin fecha) y verifica que el orden de retorno sea: fecha más próxima primero, y la sin fecha al final del grupo.
+13. **`test_create_category_invalid_color_format_rejected`** (añadida tras `/speckit-clarify`, Q3):
+    Intenta crear una categoría con `color="azul"` y verifica que se rechace con `InvalidCategoryColorError` (`400 Bad Request`), y que `color="#1A2B3C"` sí se acepte.

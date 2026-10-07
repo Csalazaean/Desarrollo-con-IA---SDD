@@ -17,8 +17,8 @@ Retorna el listado de tareas del usuario autenticado soportando filtrado por est
   - `status` *(opcional)*: `pending` | `in_progress` | `completed`.
   - `category_id` *(opcional)*: ID numérico de la categoría a filtrar, o `none` para tareas sin categoría.
   - `sort` *(opcional)*:
-    - `priority_desc`: Ordena por prioridad (alta → media → baja).
-    - `priority_asc`: Ordena por prioridad inversa (baja → media → alta).
+    - `priority_desc`: Ordena por prioridad (alta → media → baja). Desempate dentro del mismo nivel: `due_date` ascendente (más próxima primero), tareas sin `due_date` al final del grupo.
+    - `priority_asc`: Ordena por prioridad inversa (baja → media → alta). Mismo criterio de desempate que `priority_desc`.
     - `due_date`: Ordena por fecha límite.
     - `created_at`: Ordena por fecha de creación (por defecto).
 

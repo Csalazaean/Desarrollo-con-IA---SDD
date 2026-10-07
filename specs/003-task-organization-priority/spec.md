@@ -8,6 +8,14 @@
 
 **Input**: User description: "Especifica el tercer incremento funcional de TaskControl: organización y priorización de tareas. Este incremento cubre HU-07, HU-08 y HU-09 del backlog, y asume que los Incrementos 1 y 2 ya están implementados."
 
+## Clarifications
+
+### Session 2026-10-06
+
+- Q: Cuando un usuario elimina una categoría mientras, en otra pestaña, tiene abierta la edición de una tarea asignada a esa misma categoría, ¿qué debe pasar al intentar guardar esa tarea? → A: Guardar la tarea igual, con `category_id = NULL` automáticamente (la categoría ya no existe, se ignora silenciosamente; nunca bloquea el guardado).
+- Q: Cuando dos o más tareas comparten el mismo nivel de prioridad, ¿en qué orden deben aparecer entre sí dentro del listado ordenado por prioridad? → A: Desempate por fecha límite (`due_date`), la más próxima primero; las tareas sin `due_date` se ubican al final del grupo de su prioridad (tratadas como sin urgencia de fecha).
+- Q: ¿El campo `color` de una categoría debe validarse con un formato hexadecimal estricto (`#RRGGBB`), o se acepta cualquier texto de hasta 7 caracteres sin validar su formato? → A: Validar formato hexadecimal estricto `#RRGGBB` (6 dígitos hex tras `#`); rechazar con 400 si no cumple.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Prioridad de Tareas y Ordenamiento (HU-07) (Priority: P1)
@@ -64,7 +72,7 @@ Como usuario autenticado, quiero ver una indicación clara de cuáles de mis tar
 
 - **Nombres de categorías duplicados para el mismo usuario**: Si un usuario intenta crear una categoría con el mismo nombre que otra que ya posee (incluso variando mayúsculas/minúsculas), el sistema debe rechazar la creación indicando duplicidad.
 - **Nombres de categorías idénticos entre usuarios distintos**: Dos usuarios distintos deben poder tener categorías con el mismo nombre (ej. "Trabajo") sin colisión ni visibilidad compartida.
-- **Eliminación concurrente de categoría durante edición de tarea**: Si un usuario elimina una categoría en una pestaña mientras edita una tarea asignada a esa categoría en otra, al guardar la tarea el sistema debe manejarlo asignándole nulo o rechazando la asociación a una categoría ya inexistente.
+- **Eliminación concurrente de categoría durante edición de tarea**: Si un usuario elimina una categoría en una pestaña mientras edita una tarea asignada a esa categoría en otra, al guardar la tarea el sistema DEBE asignarle `category_id = NULL` automáticamente e ignorar silenciosamente la categoría ya inexistente — nunca rechaza el guardado por este motivo (ver Clarifications, Session 2026-10-06).
 - **Tareas con fecha límite fijada exactamente al día actual**: La comparación de vencimiento debe considerar la fecha completa en UTC para que una tarea del día en curso no se considere vencida hasta que concluya la jornada.
 - **Ordenamiento combinado con filtros**: Si el usuario filtra por estado `in_progress` y ordena por prioridad descendente, el sistema debe aplicar primero el filtro de estado y luego el orden jerárquico de prioridad.
 - **Valores inválidos de prioridad en peticiones manipuladas**: Si se envía un valor distinto de "alta", "media" o "baja", la petición debe ser rechazada con código de validación 400.
@@ -78,8 +86,8 @@ Como usuario autenticado, quiero ver una indicación clara de cuáles de mis tar
 - **FR-001**: El sistema DEBE asignar a toda tarea nueva un nivel de prioridad entre tres valores permitidos: "alta" (`high`), "media" (`medium`) o "baja" (`low`).
 - **FR-002**: Si al crear una tarea no se especifica una prioridad, el sistema DEBE asignar por defecto el nivel "media" (`medium`).
 - **FR-003**: El sistema DEBE permitir a un usuario autenticado modificar el nivel de prioridad de cualquiera de sus tareas no eliminadas en cualquier momento.
-- **FR-004**: El sistema DEBE permitir ordenar el listado de tareas por prioridad (respetando la precedencia: alta > media > baja, y viceversa), manteniendo la compatibilidad con los filtros por estado existentes.
-- **FR-005**: El sistema DEBE permitir a un usuario autenticado crear categorías indicando un nombre obligatorio (máximo 50 caracteres) y opcionalmente color/descripción.
+- **FR-004**: El sistema DEBE permitir ordenar el listado de tareas por prioridad (respetando la precedencia: alta > media > baja, y viceversa), manteniendo la compatibilidad con los filtros por estado existentes. Dentro de un mismo nivel de prioridad, el desempate se hace por `due_date` ascendente (la más próxima primero); las tareas sin `due_date` se ubican al final de su grupo de prioridad (ver Clarifications, Session 2026-10-06).
+- **FR-005**: El sistema DEBE permitir a un usuario autenticado crear categorías indicando un nombre obligatorio (máximo 50 caracteres) y opcionalmente color/descripción. Si se provee `color`, DEBE cumplir el formato hexadecimal estricto `#RRGGBB`; de lo contrario la petición se rechaza con 400 (ver Clarifications, Session 2026-10-06).
 - **FR-006**: El sistema DEBE garantizar la unicidad del nombre de categoría por usuario (un usuario no puede tener dos categorías con el mismo nombre).
 - **FR-007**: El sistema DEBE permitir a un usuario listar, editar y eliminar sus propias categorías.
 - **FR-008**: El sistema DEBE permitir que una tarea pertenezca a máximo una categoría (relación opcional, puede no tener categoría).
@@ -107,7 +115,7 @@ Como usuario autenticado, quiero ver una indicación clara de cuáles de mis tar
 
 - **Category**:
   - Representa un grupo temático o proyecto creado por un usuario.
-  - Atributos: `id` (entero PK), `user_id` (FK a User, no nulo), `name` (cadena no nula, máx 50), `description` (texto opcional), `color` (cadena hexadecimal opcional, máx 7), `created_at` (timestamp UTC).
+  - Atributos: `id` (entero PK), `user_id` (FK a User, no nulo), `name` (cadena no nula, máx 50), `description` (texto opcional), `color` (cadena opcional, máx 7, formato estricto `#RRGGBB` si se provee), `created_at` (timestamp UTC).
   - Restricción de unicidad: `(user_id, name)` único.
 - **Task (Actualización)**:
   - Nuevos atributos y relaciones:

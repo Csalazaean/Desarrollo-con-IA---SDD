@@ -171,6 +171,10 @@ body {
 .badge-pending { background-color: #fef3c7; color: #92400e; }
 .badge-in_progress { background-color: #dbeafe; color: #1e40af; }
 .badge-completed { background-color: #dcfce7; color: #166534; }
+.badge-priority-high { background-color: #fee2e2; color: #991b1b; }
+.badge-priority-medium { background-color: #e0e7ff; color: #3730a3; }
+.badge-priority-low { background-color: #f1f5f9; color: #475569; }
+.badge-overdue { background-color: #fecaca; color: #7f1d1d; font-weight: 700; }
 
 .filters {
     display: flex;

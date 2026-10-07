@@ -336,3 +336,124 @@ def test_cannot_reopen_pending_task_route(client):
     )
     assert resp.status_code == 400
     assert resp.get_json()["code"] == "INVALID_STATE_FOR_REOPEN"
+
+
+# --- US1 (Incremento 3): Prioridad de Tareas y Ordenamiento (HU-07) ---
+
+def test_create_task_accepts_explicit_priority(client):
+    """Verifica que POST /tasks acepte priority opcional en la creación."""
+    _login_as(client, "priorityonCreate@example.com")
+    resp = client.post(
+        "/tasks",
+        data={"title": "Tarea con Prioridad", "priority": "high"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 201
+    assert resp.get_json()["data"]["priority"] == "high"
+
+
+def test_update_task_priority_route_success(client):
+    """Verifica cambio de prioridad exitoso vía JSON."""
+    _login_as(client, "priorityuser@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea Base"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    resp = client.post(
+        f"/tasks/{task_id}/priority",
+        data={"priority": "low"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["priority"] == "low"
+
+
+def test_update_task_priority_invalid_value_route(client):
+    """Verifica 400 Bad Request ante un valor de prioridad inválido."""
+    _login_as(client, "priorityinvaliduser@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    resp = client.post(
+        f"/tasks/{task_id}/priority",
+        data={"priority": "urgente"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+def test_update_task_priority_unauthenticated_fails(client):
+    """Verifica 401 Unauthorized sin sesión activa."""
+    resp = client.post(
+        "/tasks/1/priority",
+        data={"priority": "high"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 401
+
+
+def test_update_task_priority_other_user_task_404(client):
+    """Verifica 404 al intentar cambiar la prioridad de una tarea de otro usuario."""
+    _login_as(client, "priorityowner@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea Privada"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+
+    _login_as(client, "priorityintruder@example.com")
+    resp = client.post(
+        f"/tasks/{task_id}/priority",
+        data={"priority": "high"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 404
+
+
+def test_list_tasks_sorted_by_priority_desc(client):
+    """Verifica que GET /tasks?sort=priority_desc retorne la lista ordenada por prioridad."""
+    _login_as(client, "sortuser@example.com")
+    client.post(
+        "/tasks", data={"title": "Baja", "priority": "low"},
+        headers={"Accept": "application/json"},
+    )
+    client.post(
+        "/tasks", data={"title": "Alta", "priority": "high"},
+        headers={"Accept": "application/json"},
+    )
+
+    resp = client.get("/tasks?sort=priority_desc", headers={"Accept": "application/json"})
+    assert resp.status_code == 200
+    titles = [t["title"] for t in resp.get_json()["data"]["tasks"]]
+    assert titles == ["Alta", "Baja"]
+
+
+# --- US3 (Incremento 3): Indicación Confiable de Tareas Vencidas (HU-09) ---
+
+def test_list_tasks_exposes_is_overdue(client):
+    """Verifica que GET /tasks expone is_overdue correctamente para tareas vencidas y no vencidas."""
+    _login_as(client, "overdueuser@example.com")
+
+    client.post(
+        "/tasks",
+        data={"title": "Vencida", "due_date": "2020-01-01"},
+        headers={"Accept": "application/json"},
+    )
+    client.post(
+        "/tasks",
+        data={"title": "Futura", "due_date": "2099-01-01"},
+        headers={"Accept": "application/json"},
+    )
+
+    resp = client.get("/tasks", headers={"Accept": "application/json"})
+    tasks = {t["title"]: t["is_overdue"] for t in resp.get_json()["data"]["tasks"]}
+    assert tasks["Vencida"] is True
+    assert tasks["Futura"] is False
