@@ -1,3 +1,6 @@
+import re
+
+
 def _login_as(client, email="user@example.com", password="Password123!"):
     client.post(
         "/auth/register",
@@ -329,3 +332,51 @@ def test_reopen_task_unauthorized_other_user(client):
     _login_as(client, "intruder2@example.com")
     resp = client.post(f"/tasks/{task_id}/reopen", headers={"Accept": "application/json"})
     assert resp.status_code == 404
+
+
+# --- Regresión de interfaz: los formularios renderizados deben ser utilizables ---
+
+
+def test_rendered_delete_form_action_accepts_post(client):
+    """El formulario "Eliminar" del listado debe funcionar tal como se renderiza.
+
+    Regresión: `url_for` resolvía al endpoint que solo acepta DELETE, así que el
+    formulario del navegador apuntaba a /tasks/<id> y respondía 405. Las pruebas
+    anteriores no lo detectaban porque invocaban /tasks/<id>/delete directamente.
+    """
+    _login_as(client, "formdelete@example.com")
+    client.post("/tasks", data={"title": "Tarea para borrar desde la interfaz"})
+
+    pagina = client.get("/tasks").get_data(as_text=True)
+    accion = re.search(r'action="(/tasks/\d+(?:/delete)?)" method="POST"', pagina)
+    assert accion, "El listado debe renderizar el formulario de eliminación"
+
+    respuesta = client.post(accion.group(1))
+    assert respuesta.status_code != 405, (
+        f"El formulario apunta a {accion.group(1)}, que no acepta POST"
+    )
+    assert respuesta.status_code in (200, 302)
+
+    # Y la tarea efectivamente desaparece del listado
+    restante = client.get("/tasks").get_data(as_text=True)
+    assert "Tarea para borrar desde la interfaz" not in restante
+
+
+def test_rendered_reopen_form_action_accepts_post(client):
+    """El formulario "Reabrir" de una tarea completada debe funcionar tal como se renderiza."""
+    _login_as(client, "formreopen@example.com")
+    res = client.post(
+        "/tasks",
+        data={"title": "Tarea para reabrir desde la interfaz"},
+        headers={"Accept": "application/json"},
+    )
+    task_id = res.get_json()["data"]["id"]
+    client.post(f"/tasks/{task_id}/status", data={"status": "completed"})
+
+    pagina = client.get("/tasks").get_data(as_text=True)
+    accion = re.search(r'action="(/tasks/\d+/reopen)"', pagina)
+    assert accion, "Una tarea completada debe ofrecer el formulario de reapertura"
+
+    respuesta = client.post(accion.group(1))
+    assert respuesta.status_code != 405
+    assert respuesta.status_code in (200, 302)

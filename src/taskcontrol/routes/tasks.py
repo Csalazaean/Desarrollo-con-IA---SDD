@@ -253,8 +253,12 @@ def edit_task_route(task_id: int):
         return render_template("tasks/edit.html", task=task), 400
 
 
-@tasks_bp.route("/<int:task_id>/delete", methods=["POST"])
-@tasks_bp.route("/<int:task_id>", methods=["DELETE"])
+# Dos reglas para la misma vista: el formulario HTML usa POST /<id>/delete y el
+# cliente JSON usa DELETE /<id>. Cada una necesita su propio `endpoint` porque, al
+# compartirlo, `url_for` resolvía a la regla que solo acepta DELETE y el formulario
+# del navegador recibía 405 Method Not Allowed.
+@tasks_bp.route("/<int:task_id>/delete", methods=["POST"], endpoint="delete_task_route")
+@tasks_bp.route("/<int:task_id>", methods=["DELETE"], endpoint="delete_task_api")
 @login_required
 def delete_task_route(task_id: int):
     """Eliminación lógica de tareas (HU-05)."""
